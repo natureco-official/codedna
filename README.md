@@ -47,3 +47,4 @@ codedna uninstall
 - Python 3.10+
 - Git kurulu olmalı
 # test
+# test2

@@ -1,0 +1,26 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# CodeDNA veritabanları
+*.db
+.codedna.db
+
+# Test repo'ları
+tests/sample_repo/
+
+# Dashboard build çıktısı
+dashboard/.next/
+dashboard/node_modules/
+
+# Ortam değişkenleri — asla repoya girmesin
+.env
+.env.local
+.env.*.local

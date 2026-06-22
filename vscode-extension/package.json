@@ -1,0 +1,53 @@
+{
+  "name": "codedna-vscode",
+  "displayName": "CodeDNA",
+  "description": "AI Code Transparency — inline risk & understanding indicators",
+  "version": "0.1.0",
+  "publisher": "codedna",
+  "engines": { "vscode": "^1.85.0" },
+  "categories": ["Other"],
+  "activationEvents": ["onStartupFinished"],
+  "main": "./out/extension.js",
+  "contributes": {
+    "configuration": {
+      "title": "CodeDNA",
+      "properties": {
+        "codedna.apiUrl": {
+          "type": "string",
+          "default": "http://localhost:8000",
+          "description": "CodeDNA API server URL (run 'codedna serve' first)"
+        },
+        "codedna.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable/disable CodeDNA extension"
+        },
+        "codedna.dashboardUrl": {
+          "type": "string",
+          "default": "http://localhost:3000",
+          "description": "CodeDNA dashboard URL"
+        }
+      }
+    },
+    "commands": [
+      {
+        "command": "codedna.openDashboard",
+        "title": "CodeDNA: Open Dashboard"
+      },
+      {
+        "command": "codedna.refreshFile",
+        "title": "CodeDNA: Refresh Current File Analysis"
+      }
+    ]
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "vscode:prepublish": "npm run compile"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.0.0"
+  }
+}

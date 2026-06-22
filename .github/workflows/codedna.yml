@@ -1,0 +1,53 @@
+name: CodeDNA Analysis
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+
+jobs:
+  analyze:
+    name: AI Kod Analizi
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write   # PR yorumu bırakmak için gerekli
+
+    steps:
+      - name: Repo'yu çek (tam geçmiş)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # single_commit_ratio için tam geçmiş gerekli
+
+      - name: Python kur
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: CodeDNA kur
+        run: pip install codedna
+
+      - name: Tüm dosyaları tara (bilgi amaçlı)
+        run: codedna scan
+        continue-on-error: true
+
+      - name: Yüksek riskli dosya kontrolü (≥%50)
+        id: risk_check
+        run: |
+          codedna scan --min-risk 0.5
+          echo "scan_exit=$?" >> "$GITHUB_OUTPUT"
+        continue-on-error: true
+
+      - name: Kritik risk uyarısı (≥%70) — pipeline'ı BLOKLAMAZ
+        run: |
+          echo "::group::⚠️ Yüksek AI Riski Raporu"
+          codedna scan --min-risk 0.7 && echo "✅ %70 üzeri riskli dosya bulunamadı." || echo "⚠️ Yüksek riskli dosyalar tespit edildi — incelemeniz önerilir."
+          echo "::endgroup::"
+        continue-on-error: true
+
+      - name: PR yorumu bırak (sadece PR event'lerinde)
+        if: github.event_name == 'pull_request'
+        run: codedna pr-comment
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        continue-on-error: true

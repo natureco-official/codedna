@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.4.2] - 2026-06-24 — "Doctor Legacy Style"
+
+### 🎨 Redesigned
+- **`codedna doctor`** — restored to match the legacy CodeDNA CLI aesthetic
+  - Old: Rich Table with show_lines + border_style="dim" (looked too plain)
+  - New: `console.print()` with `[bold]─── Kategori ───[/bold]` headers
+  - Per-line emoji markers: `[green]✓[/green]`, `[yellow]⚠[/yellow]`, `[red]✗[/red]`
+  - Spinner: `console.status("[dim]Testler çalıştırılıyor...[/dim]")`
+  - Summary panel: `border_style="green"|"yellow"|"red"` depending on result
+  - All messages in Turkish (matching the legacy codebase)
+
 ## [0.4.1] - 2026-06-24 — "Legacy Style"
 
 ### 🎨 Redesigned

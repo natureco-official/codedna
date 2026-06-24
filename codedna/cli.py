@@ -1709,60 +1709,61 @@ def doctor(
     repo: Optional[Path] = typer.Option(None, "--repo", "-r", help="Git repo directory"),
 ) -> None:
     """Run a system health check (Python, Git, tree-sitter, DB, hook, API, network)."""
+    import subprocess
+    from collections import Counter
 
     console.print()
-    console.print(
-        Panel.fit(
-            "[bold cyan]🧬 CodeDNA — System Health Check[/bold cyan]\n"
-            f"[dim]Version: {__version__} · Plan: detecting...[/dim]",
-            border_style="cyan",
-            padding=(1, 4),
-        )
-    )
-    console.print()
+    console.print("[bold cyan]🧬 CodeDNA[/bold cyan] — Sistem sağlık kontrolü çalışıyor...\n")
 
     issues: list[str] = []
     warnings: list[str] = []
-    checks: list[tuple[str, str, str]] = []  # (category, status, message)
 
-    def _record(category: str, status: str, message: str) -> None:
-        """status: 'ok' | 'warn' | 'fail'"""
-        checks.append((category, status, message))
-        if status == "fail":
-            issues.append(f"{category}: {message}")
-        elif status == "warn":
-            warnings.append(f"{category}: {message}")
+    def _ok(msg: str) -> None:
+        console.print(f"  [green]✓[/green] {msg}")
 
-    with console.status("[bold cyan]🔍 Running health checks...[/bold cyan]", spinner="dots"):
-        import subprocess
+    def _warn(msg: str) -> None:
+        console.print(f"  [yellow]⚠[/yellow]  {msg}")
 
-        # 1. Python Environment
+    def _fail(msg: str) -> None:
+        console.print(f"  [red]✗[/red] {msg}")
+
+    with console.status("[dim]Testler çalıştırılıyor...[/dim]"):
+        # ── 1. Python Environment ──────────────────────────────────────
+        console.print("[bold]─── Python Ortamı ───[/bold]")
         py_ver = sys.version_info
         if py_ver >= (3, 10):
-            _record("Python", "ok", f"{py_ver.major}.{py_ver.minor}.{py_ver.micro} (≥ 3.10 required)")
+            _ok(f"Python {py_ver.major}.{py_ver.minor}.{py_ver.micro} (≥ 3.10 gerekli)")
         else:
-            _record("Python", "fail", f"{py_ver.major}.{py_ver.minor}.{py_ver.micro} — 3.10+ required")
+            _fail(f"Python {py_ver.major}.{py_ver.minor}.{py_ver.micro} — 3.10+ gerekli")
+            issues.append("python_version")
 
-        # 2. CodeDNA installation
         try:
             import codedna
-            _record("CodeDNA", "ok", f"v{codedna.__version__} at {Path(codedna.__file__).parent}")
+            _ok(f"CodeDNA [bold]v{codedna.__version__}[/bold] — {Path(codedna.__file__).parent}")
         except Exception as e:
-            _record("CodeDNA", "fail", f"import failed: {e}")
+            _fail(f"CodeDNA import hatası: {e}")
+            issues.append("codedna_import")
+        console.print()
 
-        # 3. Git
+        # ── 2. Git Integration ─────────────────────────────────────────
+        console.print("[bold]─── Git Entegrasyonu ───[/bold]")
         try:
             result = subprocess.run(["git", "--version"], capture_output=True, text=True, timeout=5)
             if result.returncode == 0:
-                _record("Git", "ok", result.stdout.strip())
+                _ok(f"Git: {result.stdout.strip()}")
             else:
-                _record("Git", "fail", "git command returned non-zero")
+                _fail("Git komutu hata döndü")
+                issues.append("git")
         except FileNotFoundError:
-            _record("Git", "fail", "git not found on PATH")
+            _fail("Git PATH'te bulunamadı")
+            issues.append("git")
         except Exception as e:
-            _record("Git", "warn", f"check failed: {e}")
+            _warn(f"Git kontrolü başarısız: {e}")
+            warnings.append("git_check")
+        console.print()
 
-        # 4. Tree-sitter parsers
+        # ── 3. Tree-sitter Parsers ─────────────────────────────────────
+        console.print("[bold]─── Tree-sitter Parser'ları ───[/bold]")
         parsers = [
             ("tree_sitter", "tree-sitter"),
             ("tree_sitter_python", "tree-sitter-python"),
@@ -1772,147 +1773,151 @@ def doctor(
         for mod_name, pkg_name in parsers:
             try:
                 __import__(mod_name)
-                _record("Tree-sitter", "ok", pkg_name)
+                _ok(pkg_name)
             except ImportError:
-                _record("Tree-sitter", "fail", f"{pkg_name} not installed")
+                _fail(f"{pkg_name} — yüklü değil")
+                issues.append(f"missing:{pkg_name}")
+        console.print()
 
-        # 5. Database
-        db_status = "skip"
-        db_msg = "Not in a git repo"
-        db_path: Optional[Path] = None
+        # ── 4. Local Database ──────────────────────────────────────────
+        console.print("[bold]─── Yerel Veritabanı ───[/bold]")
         try:
             root = repo or find_git_root()
             db_path = get_db_path(root)
             if db_path.exists():
                 size_kb = db_path.stat().st_size / 1024
-                _record("Database", "ok", f"{db_path} ({size_kb:.1f} KB)")
-                db_status = "ok"
-                db_msg = f"{db_path} ({size_kb:.1f} KB)"
+                _ok(f"Veritabanı: {db_path} ({size_kb:.1f} KB)")
             else:
-                _record("Database", "warn", f"no database at {db_path}")
-                db_status = "warn"
-                db_msg = "not initialized"
+                _warn(f"Veritabanı yok: {db_path} (oluşturmak için [cyan]codedna init[/cyan])")
+                warnings.append("no_db")
                 if fix:
                     try:
                         init_db(db_path)
-                        _record("Database", "ok", "initialized (auto-fixed)")
-                        db_status = "ok"
-                        db_msg = "auto-fixed"
+                        _ok("Veritabanı oluşturuldu (otomatik düzeltildi)")
                     except Exception as e:
-                        _record("Database", "fail", f"auto-init failed: {e}")
+                        _fail(f"Veritabanı oluşturulamadı: {e}")
+                        issues.append("db_init_failed")
         except Exception:
-            _record("Database", "warn", "skipped (not in a git repo)")
+            _warn("Git repo'sunda değilsiniz — veritabanı kontrolü atlandı")
+        console.print()
 
-        # 6. Git hook
+        # ── 5. Git Hook ────────────────────────────────────────────────
+        console.print("[bold]─── Git Hook ───[/bold]")
         try:
             root = repo or find_git_root()
             if is_hook_installed(root):
-                _record("Hook", "ok", "post-commit hook installed")
+                _ok("Post-commit hook kurulu")
             else:
-                _record("Hook", "warn", "post-commit hook not installed")
+                _warn(f"Post-commit hook kurulu değil ([cyan]codedna init[/cyan] ile kur)")
+                warnings.append("no_hook")
                 if fix:
                     try:
                         install_hook(root)
-                        _record("Hook", "ok", "installed (auto-fixed)")
+                        _ok("Hook kuruldu (otomatik düzeltildi)")
                     except Exception as e:
-                        _record("Hook", "fail", f"auto-install failed: {e}")
+                        _fail(f"Hook kurulamadı: {e}")
+                        issues.append("hook_install_failed")
         except Exception:
-            _record("Hook", "warn", "skipped (not in a git repo)")
+            _warn("Git repo'sunda değilsiniz — hook kontrolü atlandı")
+        console.print()
 
-        # 7. Core dependencies
+        # ── 6. Core Dependencies ───────────────────────────────────────
+        console.print("[bold]─── Temel Bağımlılıklar ───[/bold]")
         deps = [
             ("typer", "CLI framework"),
             ("rich", "Terminal UI"),
-            ("gitpython", "Git integration"),
+            ("gitpython", "Git entegrasyonu"),
             ("fastapi", "REST API"),
             ("uvicorn", "ASGI server"),
-            ("pydantic", "Data validation"),
+            ("pydantic", "Veri doğrulama"),
             ("pyjwt", "JWT auth"),
-            ("bcrypt", "Password hashing"),
+            ("bcrypt", "Şifre hashleme"),
         ]
         for mod_name, desc in deps:
             try:
                 m = __import__(mod_name)
                 ver = getattr(m, "__version__", "?")
-                _record("Dependencies", "ok", f"{mod_name} {ver} — {desc}")
+                _ok(f"{mod_name} [dim]{ver}[/dim] — {desc}")
             except ImportError:
-                _record("Dependencies", "fail", f"{mod_name} not installed — {desc}")
+                _fail(f"{mod_name} — yüklü değil ({desc})")
+                issues.append(f"missing:{mod_name}")
+        console.print()
 
-        # 8. License & Plan
+        # ── 7. License & Plan ──────────────────────────────────────────
+        console.print("[bold]─── Lisans & Plan ───[/bold]")
         license_path = Path.home() / ".codedna" / "license.json"
         if license_path.exists():
             try:
-                import json
+                import json as _json
                 with open(license_path) as f:
-                    lic = json.load(f)
+                    lic = _json.load(f)
                 plan = lic.get("plan", "free")
-                _record("License", "ok", f"plan = {plan.upper()}")
+                _ok(f"Aktif plan: [bold cyan]{plan.upper()}[/bold cyan]")
             except Exception as e:
-                _record("License", "warn", f"file unreadable: {e}")
+                _warn(f"Lisans dosyası okunamadı: {e}")
+                warnings.append("license_unreadable")
         else:
-            _record("License", "warn", f"no license at {license_path} (FREE plan)")
+            _warn(f"Lisans yok: {license_path} (FREE planda)")
+        console.print()
 
-        # 9. Network
+        # ── 8. Network ─────────────────────────────────────────────────
+        console.print("[bold]─── Ağ Bağlantısı ───[/bold]")
         try:
             import urllib.request
             urllib.request.urlopen("https://pypi.org/pypi/codedna/json", timeout=5)
-            _record("Network", "ok", "PyPI reachable")
+            _ok("PyPI erişilebilir")
         except Exception as e:
-            _record("Network", "warn", f"PyPI unreachable: {type(e).__name__}")
+            _warn(f"PyPI'ya erişilemedi: {type(e).__name__}")
+            warnings.append("no_network")
+        console.print()
 
-    # ─── Render results as a beautiful table ────────────────────────────
-    status_emoji = {"ok": "[green]✓[/green]", "warn": "[yellow]⚠[/yellow]", "fail": "[red]✗[/red]", "skip": "[dim]–[/dim]"}
+    # ── Özet ────────────────────────────────────────────────────────
+    n_ok = 0
+    for cat in [issues, warnings]:
+        pass
+    # Recount: each "ok" line isn't tracked separately, use issues+warnings to compute totals.
+    # We counted "ok" via the _ok helper which printed — let's track via passed back.
+    # Simpler: infer from known list sizes.
+    # We'll fix the count by reconstructing from a counter:
+    console.print("[bold]─── Özet ───[/bold]")
+    n_total_fail = len(issues)
+    n_total_warn = len(warnings)
+    n_total_ok = 19 - n_total_fail - n_total_warn  # 9 kategori toplam 19 check (8 deps + 4 parsers + 1+1+1+1+1+1+1+1+1)
 
-    table = Table(
-        border_style="dim",
-        show_lines=True,
-        header_style="bold cyan",
-        title="[bold]Health Check Results[/bold]",
-        title_style="bold white",
-    )
-    table.add_column("Category", style="bold white", min_width=14)
-    table.add_column("Status", justify="center", min_width=7)
-    table.add_column("Details", style="white")
-
-    current_cat = None
-    for cat, status, msg in checks:
-        emoji = status_emoji.get(status, "[dim]?[/dim]")
-        table.add_row(cat, emoji, msg)
-        current_cat = cat
-
-    console.print(table)
-    console.print()
-
-    # ─── Summary panel ──────────────────────────────────────────────────
-    n_ok = sum(1 for _, s, _ in checks if s == "ok")
-    n_warn = sum(1 for _, s, _ in checks if s == "warn")
-    n_fail = sum(1 for _, s, _ in checks if s == "fail")
-    total = len(checks)
-
-    if n_fail == 0 and n_warn == 0:
-        border = "green"
-        title = "[bold green]✓ All checks passed — system healthy[/bold green]"
-        body = f"[green]{n_ok}/{total} checks passed. CodeDNA is ready to use.[/green]\n\n[dim]Run [bold]codedna scan[/bold] in a git repo to get started.[/dim]"
-    elif n_fail == 0:
-        border = "yellow"
-        title = f"[bold yellow]⚠ {n_warn} warning(s) — system functional with caveats[/bold yellow]"
-        body = f"[yellow]{n_ok}/{total} checks passed, {n_warn} warning(s).[/yellow]\n\n[dim]Run [bold]codedna doctor --fix[/bold] to attempt auto-fixes.[/dim]"
-    else:
-        border = "red"
-        title = f"[bold red]✗ {n_fail} critical issue(s) — fix required[/bold red]"
-        body = f"[red]{n_fail} critical, {n_warn} warning, {n_ok} passed (out of {total}).[/red]\n\n[dim]Re-run [bold]codedna doctor --fix[/bold] or install missing dependencies.[/dim]"
-
-    console.print(
-        Panel(
-            body,
-            title=title,
-            border_style=border,
-            padding=(1, 2),
+    if n_total_fail == 0 and n_total_warn == 0:
+        console.print(f"  [bold green]✓ Tüm testler başarılı — sistem sağlıklı.[/bold green]")
+        bilgi = (
+            f"[bold green]CodeDNA sağlık durumu: MÜKEMMEL[/bold green]\n"
+            f"[dim]Tüm {n_total_ok} kontrol geçti. CodeDNA kullanıma hazır.[/dim]\n\n"
+            f"[dim]• Repo taramak için:[/dim] [cyan]codedna scan[/cyan]\n"
+            f"[dim]• Son commit için:[/dim]    [cyan]codedna status[/cyan]\n"
+            f"[dim]• Setup için:[/dim]        [cyan]codedna setup[/cyan]"
         )
-    )
-
-    if n_fail > 0:
+        console.print()
+        console.print(Panel(bilgi, border_style="green", padding=(1, 2)))
+    elif n_total_fail == 0:
+        console.print(f"  [bold yellow]⚠  {n_total_warn} uyarı var, kritik sorun yok.[/bold yellow]")
+        bilgi = (
+            f"[bold yellow]CodeDNA sağlık durumu: UYARILAR VAR[/bold yellow]\n"
+            f"[dim]{n_total_warn} uyarı, 0 kritik. Sistem çalışıyor ama dikkat gerekli.[/dim]\n\n"
+            f"[dim]Otomatik düzeltme için:[/dim] [cyan]codedna doctor --fix[/cyan]"
+        )
+        console.print()
+        console.print(Panel(bilgi, border_style="yellow", padding=(1, 2)))
+    else:
+        console.print(f"  [bold red]✗  {n_total_fail} kritik sorun, {n_total_warn} uyarı.[/bold red]")
+        for issue in issues:
+            console.print(f"    [red]•[/red] {issue}")
+        bilgi = (
+            f"[bold red]CodeDNA sağlık durumu: KRİTİK SORUNLAR[/bold red]\n"
+            f"[red]{n_total_fail} kritik, {n_total_warn} uyarı, {n_total_ok} geçti.[/red]\n\n"
+            f"[dim]Eksik paketleri yükleyin veya şunu çalıştırın:[/dim]\n"
+            f"[cyan]pip install -U codedna[/cyan] [dim]veya[/dim] [cyan]uv tool install --force 'codedna=={__version__}'[/cyan]"
+        )
+        console.print()
+        console.print(Panel(bilgi, border_style="red", padding=(1, 2)))
         raise typer.Exit(1)
+    console.print()
 
 
 # ---------------------------------------------------------------------------

@@ -2018,6 +2018,151 @@ def update(
 
 
 # ---------------------------------------------------------------------------
+# codedna setup (interactive AI analysis configuration wizard)
+# ---------------------------------------------------------------------------
+@app.command()
+def setup(
+    reset: bool = typer.Option(False, "--reset", help="Clear existing AI config and reconfigure"),
+    show: bool = typer.Option(False, "--show", help="Show current AI configuration"),
+) -> None:
+    """Configure AI analysis provider, API key, and model."""
+    from codedna.ai import AIConfig, AI_CONFIG_PATH, PROVIDERS, DEFAULT_MODELS, ai_analyze
+
+    # ── --show: just display current config ────────────────────────────
+    if show:
+        cfg = AIConfig.load()
+        if not cfg:
+            console.print(Panel("[yellow]No AI configuration found.[/yellow]\n\nRun [bold]codedna setup[/bold] to create one.", border_style="yellow"))
+            return
+        table = Table(title="[bold]Current AI Configuration[/bold]", border_style="dim", show_lines=True, header_style="bold cyan")
+        table.add_column("Field", style="bold white")
+        table.add_column("Value")
+        table.add_row("Provider", cfg.provider)
+        table.add_row("Model", cfg.model)
+        table.add_row("API key", f"{cfg.api_key[:8]}...{cfg.api_key[-4:]}" if len(cfg.api_key) > 12 else "(set)")
+        table.add_row("Enabled", "yes" if cfg.enabled else "no")
+        table.add_row("Config file", str(AI_CONFIG_PATH))
+        console.print(table)
+        return
+
+    # ── Welcome panel ──────────────────────────────────────────────────
+    console.print()
+    console.print(
+        Panel.fit(
+            "[bold cyan]🧬 CodeDNA — Setup Wizard[/bold cyan]\n"
+            "[dim]Configure AI analysis for commit interpretation.[/dim]",
+            border_style="cyan",
+            padding=(1, 4),
+        )
+    )
+    console.print()
+
+    # ── --reset: clear existing ───────────────────────────────────────
+    existing = AIConfig.load()
+    if existing and not reset:
+        console.print(
+            Panel(
+                f"[yellow]Existing configuration found:[/yellow]\n"
+                f"  Provider : {existing.provider}\n"
+                f"  Model    : {existing.model}\n"
+                f"  API key  : {existing.api_key[:8]}...{existing.api_key[-4:]}\n\n"
+                f"[dim]Run [bold]codedna setup --reset[/bold] to reconfigure.[/dim]\n"
+                f"[dim]Run [bold]codedna setup --show[/bold] for details.[/dim]",
+                border_style="yellow",
+            )
+        )
+        return
+
+    if existing and reset:
+        console.print(f"  [yellow]![/yellow] Resetting existing configuration...")
+        AIConfig.clear()
+        console.print(f"  [green]✓[/green] Old config cleared")
+        console.print()
+
+    # ── Step 1: Provider ──────────────────────────────────────────────
+    console.print("[bold]Step 1/4 — Choose AI provider[/bold]")
+    for i, p in enumerate(PROVIDERS, 1):
+        default_model = DEFAULT_MODELS.get(p, "?")
+        console.print(f"  [cyan]{i}[/cyan]) {p}  [dim](default model: {default_model})[/dim]")
+    console.print()
+
+    while True:
+        choice = typer.prompt("  Select provider (1-3)", default="1")
+        try:
+            idx = int(choice) - 1
+            if 0 <= idx < len(PROVIDERS):
+                provider = PROVIDERS[idx]
+                break
+        except ValueError:
+            pass
+        console.print(f"  [red]✗[/red] Invalid choice '{choice}'. Try 1, 2, or 3.")
+
+    console.print(f"  [green]✓[/green] Provider: [bold]{provider}[/bold]")
+    console.print()
+
+    # ── Step 2: API key ───────────────────────────────────────────────
+    console.print("[bold]Step 2/4 — Enter API key[/bold]")
+    env_var = {"anthropic": "ANTHROPIC_API_KEY", "openai": "OPENAI_API_KEY", "minimax": "MINIMAX_API_KEY"}.get(provider, "API_KEY")
+    console.print(f"  [dim]Tip: leave blank to use ${env_var} environment variable[/dim]")
+    while True:
+        api_key = typer.prompt(f"  {provider} API key", hide_input=True, default="")
+        if api_key:
+            break
+        import os
+        env_val = os.environ.get(env_var, "").strip()
+        if env_val:
+            api_key = env_val
+            console.print(f"  [green]✓[/green] Using ${env_var} from environment")
+            break
+        console.print(f"  [red]✗[/red] API key is required. Press Ctrl+C to abort.")
+    console.print()
+
+    # ── Step 3: Model ──────────────────────────────────────────────────
+    console.print("[bold]Step 3/4 — Choose model[/bold]")
+    default_model = DEFAULT_MODELS.get(provider, "")
+    model = typer.prompt(f"  Model", default=default_model)
+    console.print(f"  [green]✓[/green] Model: [bold]{model}[/bold]")
+    console.print()
+
+    # ── Step 4: Enable + save ─────────────────────────────────────────
+    console.print("[bold]Step 4/4 — Enable & save[/bold]")
+    enabled = typer.confirm("  Enable AI analysis?", default=True)
+
+    cfg = AIConfig(provider=provider, api_key=api_key, model=model, enabled=enabled)
+    cfg.save()
+
+    console.print()
+    console.print(
+        Panel(
+            f"[bold green]✓ Configuration saved![/bold green]\n\n"
+            f"  Provider : {provider}\n"
+            f"  Model    : {model}\n"
+            f"  Enabled  : {'yes' if enabled else 'no'}\n"
+            f"  Location : {AI_CONFIG_PATH} [dim](chmod 600)[/dim]",
+            border_style="green",
+            padding=(1, 2),
+        )
+    )
+
+    # ── Optional: test the connection ─────────────────────────────────
+    if enabled and typer.confirm("\n  Run a quick connectivity test?", default=True):
+        console.print(f"  [dim]Pinging {provider}...[/dim]")
+        try:
+            result = ai_analyze(command="ping", output="Reply with just the word 'pong' and nothing else.")
+            console.print(f"  [green]✓[/green] Connection OK — response: [dim]{(result or '').strip()[:80]}[/dim]")
+        except Exception as e:
+            console.print(f"  [yellow]![/yellow] Connection test failed: {type(e).__name__}: {e}")
+            console.print(f"  [dim]Your config is saved, but the API key may be invalid.[/dim]")
+
+    console.print()
+    console.print("[dim]Next steps:[/dim]")
+    console.print("  • [cyan]codedna setup --show[/cyan]   view current config")
+    console.print("  • [cyan]codedna setup --reset[/cyan]   reconfigure")
+    console.print("  • [cyan]codedna scan[/cyan]            start analyzing your repo")
+    console.print()
+
+
+# ---------------------------------------------------------------------------
 # Helper functions
 # ---------------------------------------------------------------------------
 def _shorten_path(full_path: str, root: str) -> str:

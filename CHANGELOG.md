@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.4.0] - 2026-06-24 — "Setup Wizard"
+
+### ✨ Added
+- **`codedna setup` command** — interactive AI analysis configuration wizard
+  - Provider selection (Anthropic / OpenAI / MiniMax)
+  - API key entry (with secure file storage at `~/.codedna/ai_config.json`, chmod 600)
+  - Model selection with sensible defaults
+  - Enable/disable AI analysis toggle
+  - Live connectivity test after save ("test ping" prompt)
+  - Reconfigure existing setup (`codedna setup --reset`)
+  - Reuses existing `codedna.ai` module — no new dependencies
+- **`--reset` flag** — clear existing AI config and start fresh
+- **`--show` flag** — display current AI configuration (no edits)
+
+### 🔄 Changed
+- Minor version bump (0.3.4 → 0.4.0) because `setup` is a new user-facing command
+
 ## [0.3.4] - 2026-06-24 — "Doctor Redesign"
 
 ### 🎨 Redesigned

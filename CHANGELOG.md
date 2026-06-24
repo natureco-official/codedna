@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.3.3] - 2026-06-24 — "One-Command Update"
+
+### ✨ Added
+- **`codedna update` command** — self-upgrade from PyPI in a single command
+  - `codedna update` — upgrade to latest version
+  - `codedna update --check` — only check, do not install
+  - `codedna update --target 0.3.2` — install a specific version
+  - Auto-detects installer (`uv` first, falls back to `pip`)
+  - Verifies new version after install
+  - User no longer needs to remember `pip install --upgrade` or PATH dance
+- **`codedna update --check` exit code** — 0 if up-to-date, 1 if update available (CI-friendly)
+
 ## [0.3.2] - 2026-06-24 — "Windows PATH Fix"
 
 ### 📚 Documentation

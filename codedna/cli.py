@@ -1886,6 +1886,108 @@ def doctor(
 
 
 # ---------------------------------------------------------------------------
+# codedna update (self-upgrade from PyPI)
+# ---------------------------------------------------------------------------
+@app.command()
+def update(
+    check_only: bool = typer.Option(False, "--check", "-c", help="Only check for updates, do not install"),
+    target: Optional[str] = typer.Option(None, "--target", "-t", help="Install a specific version (e.g. 0.3.2)"),
+) -> None:
+    """Check for updates and upgrade CodeDNA to the latest PyPI release."""
+    import json
+    import urllib.request
+    import urllib.error
+
+    console.print(Panel.fit("🧬 CodeDNA — Update Check", style="bold cyan"))
+    console.print()
+
+    # 1. Get current version
+    import codedna
+    current = codedna.__version__
+    console.print(f"  Current version: [bold]{current}[/bold]")
+
+    # 2. Fetch latest version from PyPI
+    try:
+        req = urllib.request.Request(
+            "https://pypi.org/pypi/codedna/json",
+            headers={"Accept": "application/json", "User-Agent": "codedna-updater"},
+        )
+        with urllib.request.urlopen(req, timeout=10) as r:
+            data = json.loads(r.read())
+    except Exception as e:
+        console.print(f"  [red]✗[/red] Could not reach PyPI: {e}")
+        raise typer.Exit(1)
+
+    latest = data["info"]["version"]
+    desired = target or latest
+    console.print(f"  Latest version : [bold]{latest}[/bold]")
+
+    if target:
+        console.print(f"  Target version : [bold]{target}[/bold]")
+
+    # 3. Compare
+    def _parse(v: str) -> tuple[int, ...]:
+        return tuple(int(x) for x in v.split(".") if x.isdigit())
+
+    if _parse(current) >= _parse(desired) and not target:
+        console.print()
+        console.print(f"  [bold green]✓ Already on the latest version.[/bold green]")
+        return
+
+    console.print()
+    if check_only:
+        console.print(f"  [yellow]![/yellow] Update available: {current} → {desired}")
+        console.print(f"  [dim]Run [bold]codedna update[/bold] to install.[/dim]")
+        return
+
+    # 4. Detect installer (uv > pip)
+    import shutil
+    import subprocess
+
+    use_uv = shutil.which("uv") is not None
+    if use_uv:
+        cmd = ["uv", "tool", "install", "--force", f"codedna=={desired}"]
+        label = "uv tool install --force"
+    else:
+        cmd = [sys.executable, "-m", "pip", "install", "--upgrade", f"codedna=={desired}"]
+        label = "pip install --upgrade"
+
+    console.print(f"  [cyan]→[/cyan] Running: {label} codedna=={desired}")
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+    except subprocess.TimeoutExpired:
+        console.print("  [red]✗[/red] Install timed out after 120s")
+        raise typer.Exit(1)
+    except Exception as e:
+        console.print(f"  [red]✗[/red] Install failed: {e}")
+        raise typer.Exit(1)
+
+    if result.returncode != 0:
+        console.print(f"  [red]✗[/red] Install returned exit code {result.returncode}")
+        if result.stderr:
+            # Show last 10 lines of stderr
+            for line in result.stderr.strip().split("\n")[-10:]:
+                console.print(f"    [dim]{line}[/dim]")
+        raise typer.Exit(1)
+
+    # 5. Verify new version
+    try:
+        # Re-import to get fresh metadata
+        import importlib
+        importlib.reload(codedna)
+        new_ver = codedna.__version__
+    except Exception:
+        new_ver = "?"
+
+    console.print()
+    if new_ver == desired:
+        console.print(f"  [bold green]✓ Updated {current} → {new_ver}[/bold green]")
+    else:
+        console.print(f"  [bold green]✓ Update complete.[/bold green] Installed {desired}; current process shows {new_ver}.")
+        console.print(f"  [dim]Restart your shell to pick up the new binary.[/dim]")
+
+
+# ---------------------------------------------------------------------------
 # Helper functions
 # ---------------------------------------------------------------------------
 def _shorten_path(full_path: str, root: str) -> str:

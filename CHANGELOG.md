@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.5.1] - 2026-06-24 — "Doctor English"
+
+### 🔄 Changed
+- **`codedna doctor`** — translated all messages back to English
+  - Old (0.5.0): "Sistem sağlık kontrolü", "Python Ortamı", "Veritabanı", "Lisans", "Ağ Bağlantısı"
+  - New: "System health check", "Python Environment", "Database", "License & Plan", "Network"
+  - Style preserved: `[bold]─── Category ───[/bold]` headers, emoji markers, summary panel
+- Matches the project's "English-first" policy (README.md, CLI output, docstrings)
+
 ## [0.5.0] - 2026-06-24 — "Phase 8: Demo Mode + VS Code Marketplace"
 
 ### ✨ Added — Demo Mode (Part A)

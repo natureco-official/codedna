@@ -1,6 +1,6 @@
 [project]
 name = "codedna"
-version = "0.5.0"
+version = "0.5.1"
 description = "AI Code Transparency Tool - detect AI-written code and measure developer understanding"
 readme = "README.md"
 requires-python = ">=3.10"

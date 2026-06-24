@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.3.2] - 2026-06-24 — "Windows PATH Fix"
+
+### 📚 Documentation
+- **Windows PATH setup section** added to README
+  - Explains pip's "not on PATH" warning
+  - One-time PowerShell fix for current session
+  - Permanent fix via `[Environment]::SetEnvironmentVariable`
+  - Notes that macOS / Linux users are unaffected
+- **Verify Installation subsection** added (`codedna --version`, `codedna doctor`)
+
 ## [0.3.1] - 2026-06-24 — "Doctor Added"
 
 ### ✨ Added

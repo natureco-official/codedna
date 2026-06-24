@@ -115,6 +115,22 @@ cd codedna
 pip install -e .
 ```
 
+> ⚠️ **Windows users:** pip may warn *"The script codedna.exe is installed in '...' which is not on PATH"*. To fix:
+> ```powershell
+> # One-time setup (PowerShell, current user only)
+> $env:Path += ";$env:LocalAppData\Python\pythoncore-3.14-64\Scripts"
+> # Make it permanent:
+> [Environment]::SetEnvironmentVariable("Path", $env:Path + ";$env:LocalAppData\Python\pythoncore-3.14-64\Scripts", "User")
+> ```
+> Then open a new PowerShell window and run `codedna --version`. **macOS / Linux** users don't need this — pip installs to `/usr/local/bin` or `~/.local/bin`, which is already on PATH.
+
+### Verify Installation
+
+```bash
+codedna --version   # should show "codedna 0.3.x"
+codedna doctor      # full system health check
+```
+
 ### First Use (60 seconds)
 
 ```bash

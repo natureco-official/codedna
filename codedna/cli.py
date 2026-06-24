@@ -2147,6 +2147,208 @@ def demo(
 
 
 # ---------------------------------------------------------------------------
+# codedna security-check (pre-release secret & personal path scanner)
+# ---------------------------------------------------------------------------
+@app.command(name="security-check")
+def security_check(
+    path: Optional[Path] = typer.Option(None, "--path", "-p", help="Project root to scan (defaults to cwd)"),
+    strict: bool = typer.Option(False, "--strict", help="Exit 1 on any warning"),
+) -> None:
+    """Scan the project for personal paths, secrets, and missing .gitignore rules.
+
+    Run this BEFORE publishing or pushing to GitHub. Catches:
+    - Personal machine paths in code/README (e.g. /Users/yourname/...)
+    - Tracked secrets (.npmrc, .env*, api_key, token patterns)
+    - Missing .gitignore rules for sensitive files
+    """
+    import subprocess
+    from codedna.git_hook import find_git_root
+    import re
+
+    root = path or find_git_root() or Path.cwd()
+    if not root.exists():
+        console.print(f"  [red]✗[/red] Path not found: {root}")
+        raise typer.Exit(1)
+
+    console.print()
+    console.print(f"[bold cyan]🧬 CodeDNA[/bold cyan] — Security check: [dim]{root}[/dim]\n")
+
+    issues: list[tuple[str, str, str]] = []  # (severity, category, message)
+    warnings: list[tuple[str, str, str]] = []
+
+    def _ok(msg: str) -> None:
+        console.print(f"  [green]✓[/green] {msg}")
+
+    def _warn(msg: str) -> None:
+        console.print(f"  [yellow]⚠[/yellow]  {msg}")
+
+    def _fail(msg: str) -> None:
+        console.print(f"  [red]✗[/red] {msg}")
+
+    # ── 1. Personal machine paths ─────────────────────────────────────
+    console.print("[bold]─── 1. Personal Path Scan ───[/bold]")
+    personal_pattern = re.compile(r"/Users/[\w.-]+/|\/home\/[\w.-]+/|C:\\Users\\[\w.-]+\\")
+    found_personal: list[str] = []
+
+    # Scan README, source, and markdown files
+    scan_extensions = {".md", ".py", ".js", ".ts", ".json", ".sh", ".yml", ".yaml", ".toml"}
+    file_count = 0
+    for ext in scan_extensions:
+        for f in root.rglob(f"*{ext}"):
+            # Skip ignored dirs
+            if any(p in f.parts for p in [".git", "node_modules", "dist", "build", ".venv", "venv", "__pycache__"]):
+                continue
+            try:
+                content = f.read_text(errors="ignore")
+            except Exception:
+                continue
+            file_count += 1
+            matches = personal_pattern.findall(content)
+            if matches:
+                # Show unique paths
+                unique = set(matches)
+                for m in unique:
+                    if m not in found_personal:
+                        found_personal.append(m)
+                        rel = f.relative_to(root) if f.is_relative_to(root) else f
+                        _fail(f"Found: {m}  in  {rel}")
+                        issues.append(("fail", "personal-path", f"{m} in {rel}"))
+
+    if not found_personal:
+        _ok(f"No personal paths found ({file_count} files scanned)")
+    console.print()
+
+    # ── 2. Tracked secrets ────────────────────────────────────────────
+    console.print("[bold]─── 2. Tracked Secret Scan ───[/bold]")
+
+    # Check if .npmrc, .env*, .git/config is tracked
+    secret_files = [".npmrc", ".env", ".env.local", ".env.test", ".env.production"]
+    for sf in secret_files:
+        f = root / sf
+        if f.exists():
+            # Check if tracked
+            r = subprocess.run(
+                ["git", "ls-files", "--error-unmatch", str(f.relative_to(root))],
+                cwd=str(root), capture_output=True, text=True
+            )
+            if r.returncode == 0:
+                _fail(f"{sf} is tracked in git (contains secrets!)")
+                issues.append(("fail", "tracked-secret", f"{sf} tracked"))
+            else:
+                _ok(f"{sf} exists locally but is NOT tracked (safe)")
+        else:
+            _ok(f"{sf} not present")
+    console.print()
+
+    # ── 3. Secret patterns in tracked files ──────────────────────────
+    console.print("[bold]─── 3. Secret Pattern Scan ───[/bold]")
+    secret_patterns = {
+        "npm token": re.compile(r"npm_[A-Za-z0-9]{20,}"),
+        "GitHub PAT": re.compile(r"ghp_[A-Za-z0-9]{20,}"),
+        "OpenAI key": re.compile(r"sk-[A-Za-z0-9]{20,}"),
+        "Anthropic key": re.compile(r"sk-ant-[A-Za-z0-9]{20,}"),
+        "PyPI token": re.compile(r"pypi-[A-Za-z0-9]{20,}"),
+        "Generic API key": re.compile(r"(?i)(api[_-]?key|token|secret)\s*[:=]\s*['\"][A-Za-z0-9_-]{16,}['\"]"),
+    }
+
+    found_secrets: list[tuple[str, str, str]] = []
+    for ext in [".py", ".js", ".ts", ".json", ".sh", ".md"]:
+        for f in root.rglob(f"*{ext}"):
+            if any(p in f.parts for p in [".git", "node_modules", "dist", "build", ".venv", "venv", "__pycache__", ".pytest_cache"]):
+                continue
+            try:
+                content = f.read_text(errors="ignore")
+            except Exception:
+                continue
+            for name, pattern in secret_patterns.items():
+                if pattern.search(content):
+                    rel = f.relative_to(root) if f.is_relative_to(root) else f
+                    # Skip if it's in a docstring example or test fixture
+                    if "example" in str(rel).lower() or "test" in str(rel).lower() or "fixture" in str(rel).lower():
+                        continue
+                    # Skip obvious placeholders
+                    if any(ph in content.lower() for ph in ["placeholder", "your_api_key", "xxx", "00000"]):
+                        continue
+                    found_secrets.append((name, str(rel), pattern.pattern[:30]))
+                    _fail(f"{name} pattern in {rel}")
+                    issues.append(("fail", "secret-pattern", f"{name} in {rel}"))
+
+    if not found_secrets:
+        _ok("No secret patterns found")
+    console.print()
+
+    # ── 4. .gitignore verification ────────────────────────────────────
+    console.print("[bold]─── 4. .gitignore Verification ───[/bold]")
+    gitignore = root / ".gitignore"
+    if not gitignore.exists():
+        _fail(".gitignore not found")
+        issues.append(("fail", "no-gitignore", "no .gitignore"))
+    else:
+        content = gitignore.read_text()
+        # Check critical rules
+        required_rules = {
+            ".env": False,
+            ".env.": False,
+            ".npmrc": False,
+            "node_modules": False,
+            "__pycache__": False,
+        }
+        for line in content.split("\n"):
+            line = line.strip()
+            for rule in required_rules:
+                if rule == line or (rule.endswith(".") and rule in line):
+                    required_rules[rule] = True
+
+        for rule, present in required_rules.items():
+            if present:
+                _ok(f".gitignore includes {rule} (or pattern)")
+            else:
+                _warn(f".gitignore missing {rule} rule")
+                warnings.append(("warn", "gitignore-missing", f"missing {rule}"))
+    console.print()
+
+    # ── Summary ───────────────────────────────────────────────────────
+    n_fail = len(issues)
+    n_warn = len(warnings)
+    console.print("[bold]─── Summary ───[/bold]")
+
+    if n_fail == 0 and n_warn == 0:
+        console.print("  [bold green]✓ All security checks passed — safe to publish.[/bold green]")
+        bilgi = (
+            f"[bold green]CodeDNA security: CLEAN[/bold green]\n\n"
+            f"[dim]All checks passed. No personal paths, no tracked secrets, no secret patterns.[/dim]\n\n"
+            f"[dim]Safe to run:[/dim] [cyan]npm publish[/cyan] [dim]or[/dim] [cyan]uv publish[/cyan]"
+        )
+        border = "green"
+    elif n_fail == 0:
+        console.print(f"  [bold yellow]⚠  {n_warn} warning(s), 0 critical issues.[/bold yellow]")
+        bilgi = (
+            f"[bold yellow]CodeDNA security: WARNINGS[/bold yellow]\n\n"
+            f"[dim]{n_warn} warning(s) to review, but no critical issues blocking publish.[/dim]\n\n"
+            f"[dim]Re-run after fixes:[/dim] [cyan]codedna security-check[/cyan]"
+        )
+        border = "yellow"
+    else:
+        console.print(f"  [bold red]✗  {n_fail} critical issue(s), {n_warn} warning(s).[/bold red]")
+        for sev, cat, msg in issues:
+            console.print(f"    [red]•[/red] [{cat}] {msg}")
+        bilgi = (
+            f"[bold red]CodeDNA security: BLOCKED[/bold red]\n\n"
+            f"[red]{n_fail} critical issue(s) must be fixed before publishing.[/red]\n\n"
+            f"[dim]Fix issues, add to .gitignore, then re-run:[/dim]\n"
+            f"[cyan]codedna security-check[/cyan]"
+        )
+        border = "red"
+
+    console.print()
+    console.print(Panel(bilgi, border_style=border, padding=(1, 2)))
+    console.print()
+
+    if n_fail > 0 or (strict and n_warn > 0):
+        raise typer.Exit(1)
+
+
+# ---------------------------------------------------------------------------
 # codedna setup (interactive AI analysis configuration wizard)
 # ---------------------------------------------------------------------------
 @app.command()

@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.5.2] - 2026-06-24 - "SECURITY CHECK"
+
+### Added
+- `codedna security-check` command - Pre-release security scanner
+  - Personal machine path detection (e.g. `/Users/yourname/`, `/home/user/`)
+  - Tracked secret detection (`.npmrc`, `.env*` in git)
+  - Secret pattern detection (npm, GitHub PAT, OpenAI, Anthropic, PyPI, generic API keys)
+  - `.gitignore` rule verification (.env, .npmrc, node_modules, __pycache__)
+  - Options: `--path` (custom root), `--strict` (exit on warnings)
+  - Output: legacy CLI aesthetic (4 categories, emoji markers, summary panel)
+  - Use case: run BEFORE `uv publish` or `git push` to catch leaks
+  - Critical response: exit 1 on personal paths, tracked secrets, or missing .env rules
+  - Detected the recent NatureCo CLI v5.7.0 issue (sasuke-notes paths + tracked .npmrc)
+
 ## [0.5.1] - 2026-06-24 — "Doctor English"
 
 ### 🔄 Changed

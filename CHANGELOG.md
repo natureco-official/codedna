@@ -1,5 +1,32 @@
 # Changelog
 
+## [0.6.0] - 2026-06-24 - "MAIL MONITOR" (MINOR)
+
+### Added
+- **`codedna mail` command** - Gmail monitor with importance scoring
+  - Reads `timurhanhz3@gmail.com` via IMAP + App Password
+  - App Password stored at `~/.codedna/gmail_app_password` (chmod 600)
+  - State persisted at `~/.codedna/mail_state.json` (last UID, incremental check)
+  - 6 importance categories with scoring:
+    - `security` (10): token found, breach, 2FA, compromised
+    - `security` (9): password reset, suspicious login, locked account
+    - `infra` (8): deploy fail, build fail, crash, outage, domain expire
+    - `billing` (8): invoice, payment failed, subscription, card declined
+    - `business` (6): meeting, call, proposal, contract
+    - `project` (4): published, release, deploy success
+  - Noise detection auto-skips: `Re:`, newsletter, marketing, noreply
+  - Options:
+    - `--since N` (default 7): look back N days
+    - `--threshold N` (default 5): min importance score
+    - `--new-only`: only show messages newer than last check (uses UID tracking)
+    - `--show-noise`: also display noise/promo messages
+    - `--reset`: reset state and re-check all messages
+  - Output: legacy CLI aesthetic (bold cyan header, category-colored boxes, summary panel)
+  - Use case: cron `codedna mail --new-only` for daily digest
+
+### Changed
+- Minor version bump 0.5.2 -> 0.6.0 (new user-facing command)
+
 ## [0.5.2] - 2026-06-24 - "SECURITY CHECK"
 
 ### Added

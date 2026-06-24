@@ -2147,6 +2147,114 @@ def demo(
 
 
 # ---------------------------------------------------------------------------
+# codedna mail (Gmail monitor with importance scoring)
+# ---------------------------------------------------------------------------
+@app.command()
+def mail(
+    since: int = typer.Option(7, "--since", "-s", help="Look back N days (default: 7)"),
+    threshold: int = typer.Option(5, "--threshold", "-t", help="Min importance score (default: 5)"),
+    new_only: bool = typer.Option(False, "--new-only", help="Only show messages newer than last check"),
+    show_noise: bool = typer.Option(False, "--show-noise", help="Also show noise/promo messages"),
+    reset_state: bool = typer.Option(False, "--reset", help="Reset state and re-check all messages"),
+) -> None:
+    """Check Gmail for new important messages (security, billing, infra).
+
+    Reads from timurhanhz3@gmail.com via IMAP + App Password.
+    Scores each message by category and prints only those above threshold.
+
+    State is persisted at ~/.codedna/mail_state.json so subsequent runs only
+    show new messages.
+    """
+    from codedna.mail import (
+        check_mail, format_report, get_new_since_last_check,
+        _load_state, _save_state, MailMessage,
+    )
+
+    console.print()
+    console.print("[bold cyan]🧬 CodeDNA[/bold cyan] — Mail monitor: [dim]timurhanhz3@gmail.com[/dim]\n")
+
+    if reset_state:
+        from codedna.mail import _load_state
+        state = _load_state()
+        state["last_uid"] = "0"
+        _save_state(state)
+        console.print("  [green]✓[/green] Mail state reset")
+        console.print()
+        return
+
+    if new_only:
+        # Use UID-based check (only new since last run)
+        result = get_new_since_last_check()
+    else:
+        # Full check (look back N days)
+        result = check_mail(since_days=since, threshold=threshold)
+
+    # ── Render: legacy CLI aesthetic ──────────────────────────────────
+    console.print(f"[bold]─── Summary ───[/bold]")
+    console.print(f"  Total new: [cyan]{result.total_new}[/cyan] message(s)")
+    console.print(f"  Important: [bold {'red' if result.important else 'green'}]{len(result.important)}[/bold {'red' if result.important else 'green'}] (threshold ≥ {threshold})")
+    console.print(f"  Noise: [dim]{len(result.noise)}[/dim] skipped")
+    console.print()
+
+    if result.errors:
+        console.print("[bold red]─── Errors ───[/bold]")
+        for err in result.errors:
+            console.print(f"  [red]✗[/red] {err}")
+        console.print()
+
+    if result.important:
+        console.print("[bold]─── Important Messages ───[/bold]")
+        for m in result.important:
+            cat_color = {
+                "security": "red",
+                "billing": "yellow",
+                "infra": "yellow",
+                "project": "cyan",
+                "business": "magenta",
+            }.get(m.importance_category, "white")
+            console.print(f"  [{cat_color}]■[/{cat_color}] [bold {cat_color}][{m.importance_category}][/bold {cat_color}] score={m.importance_score}")
+            console.print(f"    From: {m.from_addr}")
+            console.print(f"    Subject: [bold]{m.subject}[/bold]")
+            console.print(f"    Date: [dim]{m.date}[/dim]")
+            if m.body_preview:
+                preview = m.body_preview[:200].replace("\n", " ").strip()
+                console.print(f"    Preview: [dim]{preview}…[/dim]")
+            console.print()
+
+    if show_noise and result.noise:
+        console.print("[bold dim]─── Noise (skipped) ───[/bold dim]")
+        for m in result.noise[:10]:  # limit to first 10
+            console.print(f"  [dim]— {m.subject[:80]}  ({m.from_addr})[/dim]")
+        if len(result.noise) > 10:
+            console.print(f"  [dim]… and {len(result.noise) - 10} more[/dim]")
+        console.print()
+
+    # ── Summary panel ────────────────────────────────────────────────
+    if result.important:
+        border = "red"
+        title = f"[bold red]🔥 {len(result.important)} Important Message(s) Found[/bold red]"
+        body = (
+            f"[red]Action needed: review the messages above.[/red]\n\n"
+            f"[dim]Next: run[/dim] [cyan]codedna mail --new-only[/cyan] [dim]for incremental updates.[/dim]"
+        )
+    elif result.total_new > 0:
+        border = "green"
+        title = "[bold green]✓ No important messages[/bold green]"
+        body = (
+            f"[green]{result.total_new} new message(s) checked, all noise/promo.[/green]\n\n"
+            f"[dim]Run[/dim] [cyan]codedna mail --show-noise[/cyan] [dim]to see all.[/dim]"
+        )
+    else:
+        border = "cyan"
+        title = "[bold cyan]✓ No new messages[/bold cyan]"
+        body = "[dim]Mailbox is up to date.[/dim]"
+
+    console.print()
+    console.print(Panel(body, title=title, border_style=border, padding=(1, 2)))
+    console.print()
+
+
+# ---------------------------------------------------------------------------
 # codedna security-check (pre-release secret & personal path scanner)
 # ---------------------------------------------------------------------------
 @app.command(name="security-check")

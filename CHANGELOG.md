@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.4.1] - 2026-06-24 — "Legacy Style"
+
+### 🎨 Redesigned
+- **`codedna setup --show`** — now uses rich Table with cyan border, emoji title, status panel
+  - Old style: bare `print()` lines
+  - New style: "🧬 CodeDNA — AI Configuration" title, status panel ("AI Ready" green)
+- **`codedna update`** — status panels replace plain text
+  - "🧬 CodeDNA — Up to date" green panel when current
+  - "🧬 CodeDNA — Update Check" yellow panel when update available
+  - "🧬 CodeDNA — Update Complete" green panel after install
+
+Matches the legacy CodeDNA CLI visual style (border_style="dim"/"cyan", padding, emoji titles).
+
 ## [0.4.0] - 2026-06-24 — "Setup Wizard"
 
 ### ✨ Added

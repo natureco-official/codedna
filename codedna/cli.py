@@ -1961,13 +1961,28 @@ def update(
 
     if _parse(current) >= _parse(desired) and not target:
         console.print()
-        console.print(f"  [bold green]✓ Already on the latest version.[/bold green]")
+        console.print(Panel(
+            f"[bold green]✓ Already on the latest version.[/bold green]\n\n"
+            f"[dim]Current:[/dim] [cyan]{current}[/cyan]\n"
+            f"[dim]Latest:[/dim]  [cyan]{latest}[/cyan]",
+            title="[bold green]🧬 CodeDNA — Up to date[/bold green]",
+            border_style="green",
+            padding=(1, 2),
+        ))
+        console.print()
         return
 
     console.print()
     if check_only:
-        console.print(f"  [yellow]![/yellow] Update available: {current} → {desired}")
+        console.print(Panel(
+            f"[bold yellow]⚠ Update available[/bold yellow]\n\n"
+            f"[dim]Current:[/dim] [yellow]{current}[/yellow]  →  [dim]Latest:[/dim] [green]{latest}[/green]",
+            title="[bold yellow]🧬 CodeDNA — Update Check[/bold yellow]",
+            border_style="yellow",
+            padding=(1, 2),
+        ))
         console.print(f"  [dim]Run [bold]codedna update[/bold] to install.[/dim]")
+        console.print()
         return
 
     # 4. Detect installer (uv > pip)
@@ -2011,10 +2026,28 @@ def update(
 
     console.print()
     if new_ver == desired:
-        console.print(f"  [bold green]✓ Updated {current} → {new_ver}[/bold green]")
+        console.print()
+        console.print(Panel(
+            f"[bold green]✓ Updated {current} → {new_ver}[/bold green]\n\n"
+            f"[dim]Installer:[/dim] [cyan]{label}[/cyan]\n"
+            f"[dim]Config:[/dim]    [dim]{'chmod 644 token removed' if 'github' in label else '~/.codedna/ai_config.json'}[/dim]",
+            title="[bold green]🧬 CodeDNA — Update Complete[/bold green]",
+            border_style="green",
+            padding=(1, 2),
+        ))
+        console.print()
     else:
-        console.print(f"  [bold green]✓ Update complete.[/bold green] Installed {desired}; current process shows {new_ver}.")
-        console.print(f"  [dim]Restart your shell to pick up the new binary.[/dim]")
+        console.print()
+        console.print(Panel(
+            f"[bold green]✓ Update complete.[/bold green]\n\n"
+            f"[dim]Installed:[/dim] [green]{desired}[/green]\n"
+            f"[dim]Current process shows:[/dim] [yellow]{new_ver}[/yellow]\n\n"
+            f"[yellow]Restart your shell to pick up the new binary.[/yellow]",
+            title="[bold green]🧬 CodeDNA — Update Complete[/bold green]",
+            border_style="green",
+            padding=(1, 2),
+        ))
+        console.print()
 
 
 # ---------------------------------------------------------------------------
@@ -2032,17 +2065,55 @@ def setup(
     if show:
         cfg = AIConfig.load()
         if not cfg:
-            console.print(Panel("[yellow]No AI configuration found.[/yellow]\n\nRun [bold]codedna setup[/bold] to create one.", border_style="yellow"))
+            console.print()
+            console.print(Panel(
+                "[yellow]⚠  No AI configuration found.[/yellow]\n\n"
+                "Run [bold cyan]codedna setup[/bold cyan] to create one.",
+                border_style="yellow",
+                padding=(1, 2),
+            ))
+            console.print()
             return
-        table = Table(title="[bold]Current AI Configuration[/bold]", border_style="dim", show_lines=True, header_style="bold cyan")
-        table.add_column("Field", style="bold white")
-        table.add_column("Value")
-        table.add_row("Provider", cfg.provider)
-        table.add_row("Model", cfg.model)
-        table.add_row("API key", f"{cfg.api_key[:8]}...{cfg.api_key[-4:]}" if len(cfg.api_key) > 12 else "(set)")
-        table.add_row("Enabled", "yes" if cfg.enabled else "no")
-        table.add_row("Config file", str(AI_CONFIG_PATH))
+        console.print()
+        table = Table(
+            title="[bold cyan]🧬 CodeDNA — AI Configuration[/bold cyan]",
+            title_style="bold white",
+            border_style="cyan",
+            show_lines=True,
+            header_style="bold cyan",
+            padding=(0, 2),
+        )
+        table.add_column("Field", style="bold white", min_width=14)
+        table.add_column("Value", style="white")
+        table.add_row("[bold]Provider[/bold]", f"[cyan]{cfg.provider}[/cyan]")
+        table.add_row("[bold]Model[/bold]", f"[cyan]{cfg.model}[/cyan]")
+        api_display = f"{cfg.api_key[:8]}…{cfg.api_key[-4:]}" if len(cfg.api_key) > 12 else "(set)"
+        table.add_row("[bold]API key[/bold]", f"[dim]{api_display}[/dim]")
+        status_str = "[green]✓ enabled[/green]" if cfg.enabled else "[yellow]⚠ disabled[/yellow]"
+        table.add_row("[bold]Status[/bold]", status_str)
+        table.add_row("[bold]Config file[/bold]", f"[dim]{AI_CONFIG_PATH}[/dim]")
         console.print(table)
+
+        # ── Status panel ──────────────────────────────────────────────
+        if cfg.enabled and cfg.api_key:
+            border = "green"
+            body = (
+                f"[green]✓ AI analysis is active.[/green]\n"
+                f"[dim]Provider {cfg.provider} will be used for commit interpretation.[/dim]"
+            )
+            title = "[bold green]✓ AI Ready[/bold green]"
+        elif cfg.enabled and not cfg.api_key:
+            border = "yellow"
+            body = "[yellow]⚠ Enabled but no API key set — calls will fail.[/yellow]"
+            title = "[bold yellow]⚠ Incomplete[/bold yellow]"
+        else:
+            border = "yellow"
+            body = "[yellow]⚠ AI analysis is disabled.[/yellow]\n[dim]Re-run with [bold]codedna setup --reset[/bold].[/dim]"
+            title = "[bold yellow]⚠ Disabled[/bold yellow]"
+
+        console.print()
+        console.print(Panel(body, title=title, border_style=border, padding=(1, 2)))
+        console.print()
         return
 
     # ── Welcome panel ──────────────────────────────────────────────────

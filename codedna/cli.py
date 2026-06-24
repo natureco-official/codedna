@@ -1710,178 +1710,208 @@ def doctor(
 ) -> None:
     """Run a system health check (Python, Git, tree-sitter, DB, hook, API, network)."""
 
-    def _ok(msg: str) -> None:
-        console.print(f"  [green]✓[/green] {msg}")
-
-    def _warn(msg: str) -> None:
-        console.print(f"  [yellow]![/yellow] {msg}")
-
-    def _fail(msg: str) -> None:
-        console.print(f"  [red]✗[/red] {msg}")
-
-    console.print(Panel.fit("🧬 CodeDNA — System Health Check", style="bold cyan"))
+    console.print()
+    console.print(
+        Panel.fit(
+            "[bold cyan]🧬 CodeDNA — System Health Check[/bold cyan]\n"
+            f"[dim]Version: {__version__} · Plan: detecting...[/dim]",
+            border_style="cyan",
+            padding=(1, 4),
+        )
+    )
     console.print()
 
     issues: list[str] = []
     warnings: list[str] = []
+    checks: list[tuple[str, str, str]] = []  # (category, status, message)
 
-    # 1. Python version
-    console.print("[bold]1. Python Environment[/bold]")
-    py_ver = sys.version_info
-    if py_ver >= (3, 10):
-        _ok(f"Python {py_ver.major}.{py_ver.minor}.{py_ver.micro} (>= 3.10 required)")
-    else:
-        _fail(f"Python {py_ver.major}.{py_ver.minor}.{py_ver.micro} — 3.10+ required")
-        issues.append("python_version")
+    def _record(category: str, status: str, message: str) -> None:
+        """status: 'ok' | 'warn' | 'fail'"""
+        checks.append((category, status, message))
+        if status == "fail":
+            issues.append(f"{category}: {message}")
+        elif status == "warn":
+            warnings.append(f"{category}: {message}")
 
-    # 2. CodeDNA installation
-    try:
-        import codedna
-        _ok(f"CodeDNA {codedna.__version__} installed at {Path(codedna.__file__).parent}")
-    except Exception as e:
-        _fail(f"CodeDNA import failed: {e}")
-        issues.append("codedna_import")
-
-    # 3. Git
-    console.print()
-    console.print("[bold]2. Git Integration[/bold]")
-    try:
+    with console.status("[bold cyan]🔍 Running health checks...[/bold cyan]", spinner="dots"):
         import subprocess
-        result = subprocess.run(["git", "--version"], capture_output=True, text=True, timeout=5)
-        if result.returncode == 0:
-            _ok(f"Git: {result.stdout.strip()}")
+
+        # 1. Python Environment
+        py_ver = sys.version_info
+        if py_ver >= (3, 10):
+            _record("Python", "ok", f"{py_ver.major}.{py_ver.minor}.{py_ver.micro} (≥ 3.10 required)")
         else:
-            _fail("Git not available")
-            issues.append("git")
-    except FileNotFoundError:
-        _fail("Git not found on PATH")
-        issues.append("git")
-    except Exception as e:
-        _warn(f"Git check failed: {e}")
-        warnings.append("git_check")
+            _record("Python", "fail", f"{py_ver.major}.{py_ver.minor}.{py_ver.micro} — 3.10+ required")
 
-    # 4. Tree-sitter parsers
-    console.print()
-    console.print("[bold]3. Tree-sitter Parsers[/bold]")
-    parsers = [
-        ("tree_sitter", "tree-sitter"),
-        ("tree_sitter_python", "tree-sitter-python"),
-        ("tree_sitter_javascript", "tree-sitter-javascript"),
-        ("tree_sitter_typescript", "tree-sitter-typescript"),
-    ]
-    for mod_name, pkg_name in parsers:
+        # 2. CodeDNA installation
         try:
-            __import__(mod_name)
-            _ok(f"{pkg_name}")
-        except ImportError:
-            _fail(f"{pkg_name} — not installed")
-            issues.append(f"missing:{pkg_name}")
-
-    # 5. Database (only if in a git repo)
-    console.print()
-    console.print("[bold]4. Local Database[/bold]")
-    try:
-        root = repo or find_git_root()
-        db_path = get_db_path(root)
-        if db_path.exists():
-            size_kb = db_path.stat().st_size / 1024
-            _ok(f"Database at {db_path} ({size_kb:.1f} KB)")
-        else:
-            _warn(f"No database at {db_path} (run `codedna init` to create)")
-            warnings.append("no_db")
-            if fix:
-                try:
-                    init_db(db_path)
-                    _ok("Database initialized")
-                except Exception as e:
-                    _fail(f"Could not create database: {e}")
-                    issues.append("db_init_failed")
-    except Exception:
-        _warn("Not in a git repo — database check skipped")
-
-    # 6. Git hook
-    console.print()
-    console.print("[bold]5. Git Hook[/bold]")
-    try:
-        root = repo or find_git_root()
-        if is_hook_installed(root):
-            _ok("Post-commit hook installed")
-        else:
-            _warn("Post-commit hook not installed (run `codedna init`)")
-            warnings.append("no_hook")
-            if fix:
-                try:
-                    install_hook(root)
-                    _ok("Hook installed")
-                except Exception as e:
-                    _fail(f"Could not install hook: {e}")
-                    issues.append("hook_install_failed")
-    except Exception:
-        _warn("Not in a git repo — hook check skipped")
-
-    # 7. Dependencies
-    console.print()
-    console.print("[bold]6. Core Dependencies[/bold]")
-    deps = [
-        ("typer", "CLI framework"),
-        ("rich", "Terminal UI"),
-        ("gitpython", "Git integration"),
-        ("fastapi", "REST API"),
-        ("uvicorn", "ASGI server"),
-        ("pydantic", "Data validation"),
-        ("pyjwt", "JWT auth"),
-        ("bcrypt", "Password hashing"),
-    ]
-    for mod_name, desc in deps:
-        try:
-            m = __import__(mod_name)
-            ver = getattr(m, "__version__", "?")
-            _ok(f"{mod_name} {ver} ({desc})")
-        except ImportError:
-            _fail(f"{mod_name} — not installed ({desc})")
-            issues.append(f"missing:{mod_name}")
-
-    # 8. License / plan
-    console.print()
-    console.print("[bold]7. License & Plan[/bold]")
-    license_path = Path.home() / ".codedna" / "license.json"
-    if license_path.exists():
-        try:
-            import json
-            with open(license_path) as f:
-                lic = json.load(f)
-            plan = lic.get("plan", "free")
-            _ok(f"Active plan: {plan.upper()}")
+            import codedna
+            _record("CodeDNA", "ok", f"v{codedna.__version__} at {Path(codedna.__file__).parent}")
         except Exception as e:
-            _warn(f"License file unreadable: {e}")
-            warnings.append("license_unreadable")
-    else:
-        _warn(f"No license at {license_path} (running on FREE plan)")
+            _record("CodeDNA", "fail", f"import failed: {e}")
 
-    # 9. Network
-    console.print()
-    console.print("[bold]8. Network[/bold]")
-    try:
-        import urllib.request
-        urllib.request.urlopen("https://pypi.org/pypi/codedna/json", timeout=5)
-        _ok("PyPI reachable")
-    except Exception as e:
-        _warn(f"PyPI unreachable: {type(e).__name__}")
-        warnings.append("no_network")
+        # 3. Git
+        try:
+            result = subprocess.run(["git", "--version"], capture_output=True, text=True, timeout=5)
+            if result.returncode == 0:
+                _record("Git", "ok", result.stdout.strip())
+            else:
+                _record("Git", "fail", "git command returned non-zero")
+        except FileNotFoundError:
+            _record("Git", "fail", "git not found on PATH")
+        except Exception as e:
+            _record("Git", "warn", f"check failed: {e}")
 
-    # Summary
-    console.print()
-    console.print("[bold]Summary[/bold]")
-    if not issues:
-        if not warnings:
-            console.print("  [bold green]✓ All checks passed — system healthy.[/bold green]")
+        # 4. Tree-sitter parsers
+        parsers = [
+            ("tree_sitter", "tree-sitter"),
+            ("tree_sitter_python", "tree-sitter-python"),
+            ("tree_sitter_javascript", "tree-sitter-javascript"),
+            ("tree_sitter_typescript", "tree-sitter-typescript"),
+        ]
+        for mod_name, pkg_name in parsers:
+            try:
+                __import__(mod_name)
+                _record("Tree-sitter", "ok", pkg_name)
+            except ImportError:
+                _record("Tree-sitter", "fail", f"{pkg_name} not installed")
+
+        # 5. Database
+        db_status = "skip"
+        db_msg = "Not in a git repo"
+        db_path: Optional[Path] = None
+        try:
+            root = repo or find_git_root()
+            db_path = get_db_path(root)
+            if db_path.exists():
+                size_kb = db_path.stat().st_size / 1024
+                _record("Database", "ok", f"{db_path} ({size_kb:.1f} KB)")
+                db_status = "ok"
+                db_msg = f"{db_path} ({size_kb:.1f} KB)"
+            else:
+                _record("Database", "warn", f"no database at {db_path}")
+                db_status = "warn"
+                db_msg = "not initialized"
+                if fix:
+                    try:
+                        init_db(db_path)
+                        _record("Database", "ok", "initialized (auto-fixed)")
+                        db_status = "ok"
+                        db_msg = "auto-fixed"
+                    except Exception as e:
+                        _record("Database", "fail", f"auto-init failed: {e}")
+        except Exception:
+            _record("Database", "warn", "skipped (not in a git repo)")
+
+        # 6. Git hook
+        try:
+            root = repo or find_git_root()
+            if is_hook_installed(root):
+                _record("Hook", "ok", "post-commit hook installed")
+            else:
+                _record("Hook", "warn", "post-commit hook not installed")
+                if fix:
+                    try:
+                        install_hook(root)
+                        _record("Hook", "ok", "installed (auto-fixed)")
+                    except Exception as e:
+                        _record("Hook", "fail", f"auto-install failed: {e}")
+        except Exception:
+            _record("Hook", "warn", "skipped (not in a git repo)")
+
+        # 7. Core dependencies
+        deps = [
+            ("typer", "CLI framework"),
+            ("rich", "Terminal UI"),
+            ("gitpython", "Git integration"),
+            ("fastapi", "REST API"),
+            ("uvicorn", "ASGI server"),
+            ("pydantic", "Data validation"),
+            ("pyjwt", "JWT auth"),
+            ("bcrypt", "Password hashing"),
+        ]
+        for mod_name, desc in deps:
+            try:
+                m = __import__(mod_name)
+                ver = getattr(m, "__version__", "?")
+                _record("Dependencies", "ok", f"{mod_name} {ver} — {desc}")
+            except ImportError:
+                _record("Dependencies", "fail", f"{mod_name} not installed — {desc}")
+
+        # 8. License & Plan
+        license_path = Path.home() / ".codedna" / "license.json"
+        if license_path.exists():
+            try:
+                import json
+                with open(license_path) as f:
+                    lic = json.load(f)
+                plan = lic.get("plan", "free")
+                _record("License", "ok", f"plan = {plan.upper()}")
+            except Exception as e:
+                _record("License", "warn", f"file unreadable: {e}")
         else:
-            console.print(f"  [bold yellow]![/bold yellow] {len(warnings)} warning(s), 0 critical issue(s)")
-            console.print("  [dim]Run [bold]codedna doctor --fix[/bold] to attempt auto-fixes.[/dim]")
+            _record("License", "warn", f"no license at {license_path} (FREE plan)")
+
+        # 9. Network
+        try:
+            import urllib.request
+            urllib.request.urlopen("https://pypi.org/pypi/codedna/json", timeout=5)
+            _record("Network", "ok", "PyPI reachable")
+        except Exception as e:
+            _record("Network", "warn", f"PyPI unreachable: {type(e).__name__}")
+
+    # ─── Render results as a beautiful table ────────────────────────────
+    status_emoji = {"ok": "[green]✓[/green]", "warn": "[yellow]⚠[/yellow]", "fail": "[red]✗[/red]", "skip": "[dim]–[/dim]"}
+
+    table = Table(
+        border_style="dim",
+        show_lines=True,
+        header_style="bold cyan",
+        title="[bold]Health Check Results[/bold]",
+        title_style="bold white",
+    )
+    table.add_column("Category", style="bold white", min_width=14)
+    table.add_column("Status", justify="center", min_width=7)
+    table.add_column("Details", style="white")
+
+    current_cat = None
+    for cat, status, msg in checks:
+        emoji = status_emoji.get(status, "[dim]?[/dim]")
+        table.add_row(cat, emoji, msg)
+        current_cat = cat
+
+    console.print(table)
+    console.print()
+
+    # ─── Summary panel ──────────────────────────────────────────────────
+    n_ok = sum(1 for _, s, _ in checks if s == "ok")
+    n_warn = sum(1 for _, s, _ in checks if s == "warn")
+    n_fail = sum(1 for _, s, _ in checks if s == "fail")
+    total = len(checks)
+
+    if n_fail == 0 and n_warn == 0:
+        border = "green"
+        title = "[bold green]✓ All checks passed — system healthy[/bold green]"
+        body = f"[green]{n_ok}/{total} checks passed. CodeDNA is ready to use.[/green]\n\n[dim]Run [bold]codedna scan[/bold] in a git repo to get started.[/dim]"
+    elif n_fail == 0:
+        border = "yellow"
+        title = f"[bold yellow]⚠ {n_warn} warning(s) — system functional with caveats[/bold yellow]"
+        body = f"[yellow]{n_ok}/{total} checks passed, {n_warn} warning(s).[/yellow]\n\n[dim]Run [bold]codedna doctor --fix[/bold] to attempt auto-fixes.[/dim]"
     else:
-        console.print(f"  [bold red]✗[/bold red] {len(issues)} critical issue(s), {len(warnings)} warning(s)")
-        for issue in issues:
-            console.print(f"    [red]•[/red] {issue}")
+        border = "red"
+        title = f"[bold red]✗ {n_fail} critical issue(s) — fix required[/bold red]"
+        body = f"[red]{n_fail} critical, {n_warn} warning, {n_ok} passed (out of {total}).[/red]\n\n[dim]Re-run [bold]codedna doctor --fix[/bold] or install missing dependencies.[/dim]"
+
+    console.print(
+        Panel(
+            body,
+            title=title,
+            border_style=border,
+            padding=(1, 2),
+        )
+    )
+
+    if n_fail > 0:
         raise typer.Exit(1)
 
 

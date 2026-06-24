@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.3.4] - 2026-06-24 — "Doctor Redesign"
+
+### 🎨 Redesigned
+- **`codedna doctor` — rich Table + Panel layout** matching the legacy CodeDNA CLI style
+  - Header Panel with version + plan info (`border_style="cyan"`)
+  - Animated spinner during checks (`console.status`, dots spinner)
+  - Rich Table with `show_lines=True`, header_style cyan
+  - Color-coded status column: ✓ green, ⚠ yellow, ✗ red, – dim
+  - Summary Panel with color-coded border (green / yellow / red)
+  - 9 categories, 19 individual checks
+
 ## [0.3.3] - 2026-06-24 — "One-Command Update"
 
 ### ✨ Added

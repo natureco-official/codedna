@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.3.1] - 2026-06-24 — "Doctor Added"
+
+### ✨ Added
+- **`codedna doctor` command** — System health check
+  - Python version (>= 3.10 required)
+  - CodeDNA installation
+  - Git integration
+  - 4 tree-sitter parsers (core, python, javascript, typescript)
+  - Local database (size, location)
+  - Git hook status
+  - 8 core dependencies (typer, rich, gitpython, fastapi, uvicorn, pydantic, pyjwt, bcrypt)
+  - License & plan
+  - Network reachability (PyPI)
+  - **`--fix` flag** — auto-creates database + installs hook when missing
+  - Color-coded output (✓ green, ! yellow, ✗ red)
+  - Exit 1 on critical issues
+  - Fully English output
+
 ## [0.3.0] - 2026-06-24 — "English First"
 
 ### 🌐 Internationalization

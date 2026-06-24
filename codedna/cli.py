@@ -1701,6 +1701,191 @@ def uninstall(
 
 
 # ---------------------------------------------------------------------------
+# codedna doctor (system health check)
+# ---------------------------------------------------------------------------
+@app.command()
+def doctor(
+    fix: bool = typer.Option(False, "--fix", help="Attempt to auto-fix detected issues"),
+    repo: Optional[Path] = typer.Option(None, "--repo", "-r", help="Git repo directory"),
+) -> None:
+    """Run a system health check (Python, Git, tree-sitter, DB, hook, API, network)."""
+
+    def _ok(msg: str) -> None:
+        console.print(f"  [green]✓[/green] {msg}")
+
+    def _warn(msg: str) -> None:
+        console.print(f"  [yellow]![/yellow] {msg}")
+
+    def _fail(msg: str) -> None:
+        console.print(f"  [red]✗[/red] {msg}")
+
+    console.print(Panel.fit("🧬 CodeDNA — System Health Check", style="bold cyan"))
+    console.print()
+
+    issues: list[str] = []
+    warnings: list[str] = []
+
+    # 1. Python version
+    console.print("[bold]1. Python Environment[/bold]")
+    py_ver = sys.version_info
+    if py_ver >= (3, 10):
+        _ok(f"Python {py_ver.major}.{py_ver.minor}.{py_ver.micro} (>= 3.10 required)")
+    else:
+        _fail(f"Python {py_ver.major}.{py_ver.minor}.{py_ver.micro} — 3.10+ required")
+        issues.append("python_version")
+
+    # 2. CodeDNA installation
+    try:
+        import codedna
+        _ok(f"CodeDNA {codedna.__version__} installed at {Path(codedna.__file__).parent}")
+    except Exception as e:
+        _fail(f"CodeDNA import failed: {e}")
+        issues.append("codedna_import")
+
+    # 3. Git
+    console.print()
+    console.print("[bold]2. Git Integration[/bold]")
+    try:
+        import subprocess
+        result = subprocess.run(["git", "--version"], capture_output=True, text=True, timeout=5)
+        if result.returncode == 0:
+            _ok(f"Git: {result.stdout.strip()}")
+        else:
+            _fail("Git not available")
+            issues.append("git")
+    except FileNotFoundError:
+        _fail("Git not found on PATH")
+        issues.append("git")
+    except Exception as e:
+        _warn(f"Git check failed: {e}")
+        warnings.append("git_check")
+
+    # 4. Tree-sitter parsers
+    console.print()
+    console.print("[bold]3. Tree-sitter Parsers[/bold]")
+    parsers = [
+        ("tree_sitter", "tree-sitter"),
+        ("tree_sitter_python", "tree-sitter-python"),
+        ("tree_sitter_javascript", "tree-sitter-javascript"),
+        ("tree_sitter_typescript", "tree-sitter-typescript"),
+    ]
+    for mod_name, pkg_name in parsers:
+        try:
+            __import__(mod_name)
+            _ok(f"{pkg_name}")
+        except ImportError:
+            _fail(f"{pkg_name} — not installed")
+            issues.append(f"missing:{pkg_name}")
+
+    # 5. Database (only if in a git repo)
+    console.print()
+    console.print("[bold]4. Local Database[/bold]")
+    try:
+        root = repo or find_git_root()
+        db_path = get_db_path(root)
+        if db_path.exists():
+            size_kb = db_path.stat().st_size / 1024
+            _ok(f"Database at {db_path} ({size_kb:.1f} KB)")
+        else:
+            _warn(f"No database at {db_path} (run `codedna init` to create)")
+            warnings.append("no_db")
+            if fix:
+                try:
+                    init_db(db_path)
+                    _ok("Database initialized")
+                except Exception as e:
+                    _fail(f"Could not create database: {e}")
+                    issues.append("db_init_failed")
+    except Exception:
+        _warn("Not in a git repo — database check skipped")
+
+    # 6. Git hook
+    console.print()
+    console.print("[bold]5. Git Hook[/bold]")
+    try:
+        root = repo or find_git_root()
+        if is_hook_installed(root):
+            _ok("Post-commit hook installed")
+        else:
+            _warn("Post-commit hook not installed (run `codedna init`)")
+            warnings.append("no_hook")
+            if fix:
+                try:
+                    install_hook(root)
+                    _ok("Hook installed")
+                except Exception as e:
+                    _fail(f"Could not install hook: {e}")
+                    issues.append("hook_install_failed")
+    except Exception:
+        _warn("Not in a git repo — hook check skipped")
+
+    # 7. Dependencies
+    console.print()
+    console.print("[bold]6. Core Dependencies[/bold]")
+    deps = [
+        ("typer", "CLI framework"),
+        ("rich", "Terminal UI"),
+        ("gitpython", "Git integration"),
+        ("fastapi", "REST API"),
+        ("uvicorn", "ASGI server"),
+        ("pydantic", "Data validation"),
+        ("pyjwt", "JWT auth"),
+        ("bcrypt", "Password hashing"),
+    ]
+    for mod_name, desc in deps:
+        try:
+            m = __import__(mod_name)
+            ver = getattr(m, "__version__", "?")
+            _ok(f"{mod_name} {ver} ({desc})")
+        except ImportError:
+            _fail(f"{mod_name} — not installed ({desc})")
+            issues.append(f"missing:{mod_name}")
+
+    # 8. License / plan
+    console.print()
+    console.print("[bold]7. License & Plan[/bold]")
+    license_path = Path.home() / ".codedna" / "license.json"
+    if license_path.exists():
+        try:
+            import json
+            with open(license_path) as f:
+                lic = json.load(f)
+            plan = lic.get("plan", "free")
+            _ok(f"Active plan: {plan.upper()}")
+        except Exception as e:
+            _warn(f"License file unreadable: {e}")
+            warnings.append("license_unreadable")
+    else:
+        _warn(f"No license at {license_path} (running on FREE plan)")
+
+    # 9. Network
+    console.print()
+    console.print("[bold]8. Network[/bold]")
+    try:
+        import urllib.request
+        urllib.request.urlopen("https://pypi.org/pypi/codedna/json", timeout=5)
+        _ok("PyPI reachable")
+    except Exception as e:
+        _warn(f"PyPI unreachable: {type(e).__name__}")
+        warnings.append("no_network")
+
+    # Summary
+    console.print()
+    console.print("[bold]Summary[/bold]")
+    if not issues:
+        if not warnings:
+            console.print("  [bold green]✓ All checks passed — system healthy.[/bold green]")
+        else:
+            console.print(f"  [bold yellow]![/bold yellow] {len(warnings)} warning(s), 0 critical issue(s)")
+            console.print("  [dim]Run [bold]codedna doctor --fix[/bold] to attempt auto-fixes.[/dim]")
+    else:
+        console.print(f"  [bold red]✗[/bold red] {len(issues)} critical issue(s), {len(warnings)} warning(s)")
+        for issue in issues:
+            console.print(f"    [red]•[/red] {issue}")
+        raise typer.Exit(1)
+
+
+# ---------------------------------------------------------------------------
 # Helper functions
 # ---------------------------------------------------------------------------
 def _shorten_path(full_path: str, root: str) -> str:

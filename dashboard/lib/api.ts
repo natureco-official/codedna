@@ -1,116 +1,116 @@
 /**
- * CodeDNA API istemcisi — tüm fetch çağrıları burada merkezi yönetilir.
+ * CodeDNA API client — all fetch calls are centrally managed here.
  */
 
 const API_URL =
   process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 // ---------------------------------------------------------------------------
-// Tip tanımları (FastAPI yanıtlarıyla birebir eşleşir)
+// Type definitions (match FastAPI responses 1:1)
 // ---------------------------------------------------------------------------
 
 export interface RepoSummary {
-  toplam_commit: number;
-  ortalama_ai_skoru: number | null;
-  ortalama_ai_yuzdesi: number | null;
-  risk_seviyesi: "YÜKSEK" | "ORTA" | "DÜŞÜK" | "BİLİNMİYOR";
-  anlama_skoru_olan_commit: number;
-  ortalama_anlama_skoru: number | null;
+  total_commits: number;
+  avg_ai_score: number | null;
+  avg_ai_percentage: number | null;
+  risk_level: "HIGH" | "MEDIUM" | "LOW" | "UNKNOWN";
+  commits_with_understanding: number;
+  avg_understanding_score: number | null;
 }
 
-export interface DosyaSkoru {
-  dosya_yolu: string;
-  ai_olasıligi: number;
-  ai_yuzdesi: number;
-  karmasiklik_skoru: number;
-  karmasiklik_etiketi: "Düşük" | "Orta" | "Yüksek";
-  yorum_orani: number;
-  ortalama_fonksiyon_uzunlugu: number;
-  tek_commit_orani: number;
-  toplam_satir: number;
-  fonksiyon_sayisi: number;
+export interface FileScore {
+  file_path: string;
+  ai_probability: number;
+  ai_percentage: number;
+  complexity_score: number;
+  complexity_label: "Low" | "Medium" | "High";
+  comment_ratio: number;
+  avg_function_length: number;
+  single_commit_ratio: number;
+  total_lines: number;
+  function_count: number;
 }
 
-export interface DosyalarYanit {
-  toplam_dosya: number;
-  ortalama_ai_skoru: number;
-  dosyalar: DosyaSkoru[];
+export interface FilesResponse {
+  total_files: number;
+  avg_ai_score: number;
+  files: FileScore[];
 }
 
 export interface Commit {
   commit_hash: string;
-  hash_kisa: string;
-  yazar: string | null;
-  zaman_dam: number | null;
-  tarih: string | null;
-  degisen_dosya_sayisi: number;
-  anlama_skoru: number | null;
-  olusturulma: string | null;
+  short_hash: string;
+  author: string | null;
+  timestamp: number | null;
+  date: string | null;
+  files_changed: number;
+  understanding_score: number | null;
+  created_at: string | null;
 }
 
-export interface CommitListYanit {
-  toplam: number;
-  commitler: Commit[];
+export interface CommitListResponse {
+  total: number;
+  commits: Commit[];
 }
 
-export interface CommitDosyaSkoru {
-  dosya_yolu: string;
-  ai_olasıligi: number | null;
-  karmasiklik_skoru: number | null;
-  yorum_orani: number | null;
-  anlama_skoru: number | null;
+export interface CommitFileScore {
+  file_path: string;
+  ai_probability: number | null;
+  complexity_score: number | null;
+  comment_ratio: number | null;
+  understanding_score: number | null;
 }
 
-export interface CommitDetay {
+export interface CommitDetail {
   commit_hash: string;
-  yazar: string | null;
-  tarih: string | null;
-  degisen_dosya_sayisi: number;
-  anlama_skoru: number | null;
-  dosyalar: CommitDosyaSkoru[];
+  author: string | null;
+  date: string | null;
+  files_changed: number;
+  understanding_score: number | null;
+  files: CommitFileScore[];
 }
 
-export interface HealthYanit {
-  durum: string;
-  versiyon: string;
-  zaman: string;
+export interface HealthResponse {
+  status: string;
+  version: string;
+  timestamp: string;
 }
 
 // ---------------------------------------------------------------------------
-// API fonksiyonları
+// API functions
 // ---------------------------------------------------------------------------
 
-/** Belirtilen endpoint'ten veri çek, hata durumunda null döndür */
+/** Fetch data from the given endpoint, throw on error */
 async function apiFetch<T>(path: string): Promise<T> {
   const res = await fetch(`${API_URL}${path}`, {
-    // Her istekte güncel veri almak için cache'i devre dışı bırak
+    // Disable cache to always get fresh data
     cache: "no-store",
     headers: { Accept: "application/json" },
   });
 
   if (!res.ok) {
-    throw new Error(`API hatası: ${res.status} ${path}`);
+    throw new Error(`API error: ${res.status} ${path}`);
   }
 
   return res.json() as Promise<T>;
 }
 
-export async function getHealth(): Promise<HealthYanit> {
-  return apiFetch<HealthYanit>("/health");
+export async function getHealth(): Promise<HealthResponse> {
+  return apiFetch<HealthResponse>("/health");
 }
 
 export async function getRepoSummary(): Promise<RepoSummary> {
   return apiFetch<RepoSummary>("/repo/summary");
 }
 
-export async function getRepoDosyalar(minRisk = 0): Promise<DosyalarYanit> {
-  return apiFetch<DosyalarYanit>(`/repo/files?min_risk=${minRisk}`);
+export async function getRepoFiles(minRisk = 0): Promise<FilesResponse> {
+  return apiFetch<FilesResponse>(`/repo/files?min_risk=${minRisk}`);
 }
 
-export async function getCommitler(limit = 20): Promise<CommitListYanit> {
-  return apiFetch<CommitListYanit>(`/commits?limit=${limit}`);
+export async function getCommits(limit = 20): Promise<CommitListResponse> {
+  return apiFetch<CommitListResponse>(`/commits?limit=${limit}`);
 }
 
-export async function getCommitDetay(hash: string): Promise<CommitDetay> {
-  return apiFetch<CommitDetay>(`/commits/${hash}`);
+export async function getCommitDetail(hash: string): Promise<CommitDetail> {
+  return apiFetch<CommitDetail>(`/commits/${hash}`);
 }

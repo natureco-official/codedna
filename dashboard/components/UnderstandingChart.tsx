@@ -7,46 +7,46 @@ import {
 import { Commit } from "@/lib/api";
 import { useTranslation } from "@/lib/i18n";
 
-interface GrafikVeri {
+interface ChartDataPoint {
   hash: string;
-  anlama: number;
-  tarih: string;
+  score: number;
+  date: string;
 }
 
-function OzelTooltip({
+function CustomTooltip({
   active,
   payload,
 }: {
   active?: boolean;
-  payload?: Array<{ value: number; payload: GrafikVeri }>;
+  payload?: Array<{ value: number; payload: ChartDataPoint }>;
 }) {
   const { t } = useTranslation();
   if (!active || !payload?.length) return null;
-  const veri = payload[0];
+  const item = payload[0];
   return (
     <div className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-xs">
-      <p className="text-cyan-400 font-mono">{veri.payload.hash}</p>
-      <p className="text-gray-300">{veri.payload.tarih}</p>
+      <p className="text-cyan-400 font-mono">{item.payload.hash}</p>
+      <p className="text-gray-300">{item.payload.date}</p>
       <p className="text-white font-semibold mt-1">
-        {t("chart_tooltip_understanding")}: {veri.value.toFixed(1)}/5
+        {t("chart_tooltip_understanding")}: {item.value.toFixed(1)}/5
       </p>
     </div>
   );
 }
 
-export function AnlamaGrafigi({ commitler }: { commitler: Commit[] }) {
+export function UnderstandingChart({ commits }: { commits: Commit[] }) {
   const { t } = useTranslation();
 
-  const veri: GrafikVeri[] = commitler
-    .filter((c) => c.anlama_skoru != null)
+  const data: ChartDataPoint[] = commits
+    .filter((c) => c.understanding_score != null)
     .reverse()
     .map((c) => ({
-      hash: c.hash_kisa,
-      anlama: c.anlama_skoru!,
-      tarih: c.tarih ?? "",
+      hash: c.short_hash,
+      score: c.understanding_score!,
+      date: c.date ?? "",
     }));
 
-  if (veri.length === 0) {
+  if (data.length === 0) {
     return (
       <div className="flex items-center justify-center h-40 text-gray-600 text-sm text-center px-4">
         {t("chart_no_data")}
@@ -55,7 +55,7 @@ export function AnlamaGrafigi({ commitler }: { commitler: Commit[] }) {
   }
   return (
     <ResponsiveContainer width="100%" height={200}>
-      <BarChart data={veri} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
+      <BarChart data={data} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
         <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" vertical={false} />
         <XAxis
           dataKey="hash"
@@ -70,12 +70,12 @@ export function AnlamaGrafigi({ commitler }: { commitler: Commit[] }) {
           axisLine={false}
           tickLine={false}
         />
-        <Tooltip content={<OzelTooltip />} cursor={{ fill: "rgba(255,255,255,0.04)" }} />
-        <Bar dataKey="anlama" radius={[4, 4, 0, 0]}>
-          {veri.map((entry) => (
+        <Tooltip content={<CustomTooltip />} cursor={{ fill: "rgba(255,255,255,0.04)" }} />
+        <Bar dataKey="score" radius={[4, 4, 0, 0]}>
+          {data.map((entry) => (
             <Cell
               key={entry.hash}
-              fill={entry.anlama >= 4 ? "#22c55e" : entry.anlama >= 2.5 ? "#eab308" : "#ef4444"}
+              fill={entry.score >= 4 ? "#22c55e" : entry.score >= 2.5 ? "#eab308" : "#ef4444"}
             />
           ))}
         </Bar>
@@ -83,3 +83,4 @@ export function AnlamaGrafigi({ commitler }: { commitler: Commit[] }) {
     </ResponsiveContainer>
   );
 }
+

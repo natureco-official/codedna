@@ -1,10 +1,10 @@
 """
-Farklı AI kod asistanlarının bıraktığı örüntüleri ayırt eder.
+Distinguishes patterns left by different AI code assistants.
 
-ÖNEMLİ UYARI:
-  Bu kesin bir tespit DEĞİL — örüntü tabanlı sezgisel bir TAHMİN modelidir.
-  Sonuçlar yanlış pozitif/negatif içerebilir. Kesinlik iddia edilmez.
-  Kullanıcıya bu bağlamda sunulmalıdır.
+IMPORTANT WARNING:
+  This is NOT a definitive detection — it is a pattern-based heuristic ESTIMATION model.
+  Results may contain false positives/negatives. No certainty is claimed.
+  Must be presented to users with this context.
 """
 
 from __future__ import annotations
@@ -18,101 +18,99 @@ from codedna.db import get_connection
 
 
 # ---------------------------------------------------------------------------
-# Araç örüntü tanımları — sezgisel, savunulabilir ama kesin değil
+# Tool pattern definitions — heuristic, defensible but not definitive
 # ---------------------------------------------------------------------------
 
-# Her araç için ağırlıklı örüntü listesi: (regex_pattern, ağırlık)
-_ARAC_ORNUNTULERI: dict[str, list[tuple[str, float]]] = {
+# Weighted pattern list per tool: (regex_pattern, weight)
+_TOOL_PATTERNS: dict[str, list[tuple[str, float]]] = {
     "copilot": [
-        # GitHub Copilot: kısa, özlü satır içi yorumlar, tip bildirimleri yok
-        (r"#\s+[A-Z][a-z].{5,40}$", 0.15),           # tek satır başlık yorum
-        (r"def \w+\([^)]{0,30}\):\s*$", 0.10),        # parametresiz/minimal fonksiyon
-        (r"#\s+TODO:", 0.10),                          # TODO yorumları
-        (r"^\s{4}pass\s*$", 0.08),                     # pass ile biten fonksiyonlar
+        # GitHub Copilot: short inline comments, no type declarations
+        (r"#\s+[A-Z][a-z].{5,40}$", 0.15),           # single-line title comment
+        (r"def \w+\([^)]{0,30}\):\s*$", 0.10),        # no-param / minimal function
+        (r"#\s+TODO:", 0.10),                          # TODO comments
+        (r"^\s{4}pass\s*$", 0.08),                     # functions ending with pass
         (r"return \w+\.get\(", 0.07),                  # .get() pattern
     ],
     "cursor": [
-        # Cursor: detaylı docstring, tip ipucu zenginliği
-        (r'"""[\s\S]{20,200}"""', 0.20),               # uzun docstring
-        (r":\s*(str|int|float|bool|list|dict|Optional)", 0.15),  # tip ipuçları
-        (r"->.*:\s*$", 0.12),                          # dönüş tipi bildirimi
-        (r"from typing import", 0.10),                 # typing modülü
-        (r"@dataclass", 0.10),                         # dataclass kullanımı
+        # Cursor: detailed docstrings, rich type hints
+        (r'"""[\s\S]{20,200}"""', 0.20),               # long docstring
+        (r":\s*(str|int|float|bool|list|dict|Optional)", 0.15),  # type hints
+        (r"->.*:\s*$", 0.12),                          # return type declaration
+        (r"from typing import", 0.10),                 # typing module
+        (r"@dataclass", 0.10),                         # dataclass usage
     ],
     "claude": [
-        # Claude: yapılandırılmış çok satırlı açıklamalar, Türkçe/çok dilli yorum
-        (r"#\s+\d+\.\s+\w", 0.18),                    # numaralı adım yorumları
+        # Claude: structured multi-line comments, Args/Returns docstrings
+        (r"#\s+\d+\.\s+\w", 0.18),                    # numbered step comments
         (r"\"\"\"[\s\S]*Args:[\s\S]*Returns:", 0.20),  # Args/Returns docstring
-        (r"#\s+─{3,}", 0.15),                          # ayırıcı çizgi yorumlar
-        (r"raise \w+Error\(f[\"']", 0.10),             # f-string hata mesajları
+        (r"#\s+─{3,}", 0.15),                          # separator line comments
+        (r"raise \w+Error\(f[\"']", 0.10),             # f-string error messages
         (r"from __future__ import annotations", 0.12), # modern annotation
     ],
 }
 
-# Minimum güven eşiği — altındaysa "unknown" döndür
-_MIN_GUVEN = 0.15
+# Minimum confidence threshold — returns "unknown" if below this
+_MIN_CONFIDENCE = 0.15
 
 
 @dataclass
-class AIAracTahmini:
-    """Tek dosya için AI araç tahmini."""
+class AIToolGuess:
+    """AI tool guess for a single file."""
 
-    arac: str              # "copilot" | "cursor" | "claude" | "unknown"
-    guven: float           # 0.0–1.0
-    puan_detayi: dict[str, float]  # araç → ham puan
-    uyari: str = (
-        "Bu tespit örüntü tabanlı bir tahmindir — kesin değildir."
+    tool: str              # "copilot" | "cursor" | "claude" | "unknown"
+    confidence: float      # 0.0–1.0
+    score_detail: dict[str, float]  # tool → raw score
+    warning: str = (
+        "This detection is pattern-based estimation — not definitive."
     )
 
 
-def guess_ai_tool(file_path: str, code: str) -> AIAracTahmini:
+def guess_ai_tool(file_path: str, code: str) -> AIToolGuess:
     """
-    Dosya için olası AI aracı tahmini ve güven skoru döndür.
+    Return a probable AI tool guess and confidence score for a file.
 
-    Strateji:
-      Her araç için tanımlı regex örüntüleri koda uygulanır, ağırlıklı
-      eşleşme sayısına göre toplam puan hesaplanır. En yüksek puanlı
-      araç, minimum güven eşiğini geçiyorsa seçilir.
+    Strategy:
+      Defined regex patterns for each tool are applied to the code.
+      A total score is computed based on weighted match counts.
+      The highest-scoring tool is selected if it exceeds the minimum confidence threshold.
 
     Args:
-        file_path: Dosya yolu (uzantı filtresi için kullanılır)
-        code: Dosyanın kaynak kodu
+        file_path: File path (used for extension filtering)
+        code: Source code of the file
 
     Returns:
-        AIAracTahmini nesnesi
+        AIToolGuess object
     """
-    satirlar = code.splitlines()
-    puan: dict[str, float] = {arac: 0.0 for arac in _ARAC_ORNUNTULERI}
+    lines = code.splitlines()
+    scores: dict[str, float] = {tool: 0.0 for tool in _TOOL_PATTERNS}
 
-    for arac, ornuntular in _ARAC_ORNUNTULERI.items():
-        for desen, agirlik in ornuntular:
-            eslesme_sayisi = sum(
-                1 for satir in satirlar if re.search(desen, satir)
-            )
-            # Satır sayısına normalize et (büyük dosyalarda haksız avantajı engelle)
-            norm = eslesme_sayisi / max(len(satirlar), 1)
-            puan[arac] += norm * agirlik * 10  # 0-10 arası ölçek
+    for tool, patterns in _TOOL_PATTERNS.items():
+        for pattern, weight in patterns:
+            match_count = sum(1 for line in lines if re.search(pattern, line))
+            # Normalize by line count (prevents unfair advantage in large files)
+            norm = match_count / max(len(lines), 1)
+            scores[tool] += norm * weight * 10  # scale to 0–10
 
-    # Normalize et — toplam puana göre güven hesapla
-    toplam = sum(puan.values())
-    if toplam < 0.01:
-        return AIAracTahmini(
-            arac="unknown",
-            guven=0.0,
-            puan_detayi={k: round(v, 3) for k, v in puan.items()},
+    # Normalize — calculate confidence relative to total score
+    total = sum(scores.values())
+    if total < 0.01:
+        return AIToolGuess(
+            tool="unknown",
+            confidence=0.0,
+            score_detail={k: round(v, 3) for k, v in scores.items()},
         )
 
-    en_iyi_arac = max(puan, key=lambda k: puan[k])
-    guven = puan[en_iyi_arac] / toplam
+    best_tool = max(scores, key=lambda k: scores[k])
+    confidence = scores[best_tool] / total
 
-    # Minimum eşiği geçemiyen → unknown
-    if guven < _MIN_GUVEN:
-        en_iyi_arac = "unknown"
+    # Below minimum threshold → unknown
+    if confidence < _MIN_CONFIDENCE:
+        best_tool = "unknown"
 
-    return AIAracTahmini(
-        arac=en_iyi_arac,
-        guven=round(guven, 3),
-        puan_detayi={k: round(v, 3) for k, v in puan.items()},
+    return AIToolGuess(
+        tool=best_tool,
+        confidence=round(confidence, 3),
+        score_detail={k: round(v, 3) for k, v in scores.items()},
     )
 
 
@@ -121,36 +119,35 @@ def analyze_repo_tools(
     db_path: Path,
 ) -> dict[str, dict[str, float]]:
     """
-    Repo genelinde araç bazlı dosya analizi yap ve sonuçları DB'ye kaydet.
+    Run a tool-based file analysis across the repo and save results to DB.
 
     Returns:
-        {arac: {"dosya_sayisi": N, "avg_ai_probability": X}} sözlüğü
+        {tool: {"file_count": N, "avg_ai_probability": X}} dict
     """
     from codedna.scorer import scan_repository
-    from codedna.db import get_connection
 
-    desteklenen = {".py", ".js", ".jsx", ".ts", ".tsx"}
-    sonuclar = scan_repository(repo_path, max_files=200)
+    supported = {".py", ".js", ".jsx", ".ts", ".tsx"}
+    results = scan_repository(repo_path, max_files=200)
 
-    # Araç sayaçları
-    arac_istatistik: dict[str, dict[str, list]] = {
+    # Tool counters
+    tool_stats: dict[str, dict[str, list]] = {
         "copilot": {"ai_prob": [], "understanding": []},
         "cursor":  {"ai_prob": [], "understanding": []},
         "claude":  {"ai_prob": [], "understanding": []},
         "unknown": {"ai_prob": [], "understanding": []},
     }
 
-    for sonuc in sonuclar:
-        if Path(sonuc.file_path).suffix.lower() not in desteklenen:
+    for result in results:
+        if Path(result.file_path).suffix.lower() not in supported:
             continue
         try:
-            kod = Path(sonuc.file_path).read_text(encoding="utf-8", errors="replace")
+            code = Path(result.file_path).read_text(encoding="utf-8", errors="replace")
         except Exception:
             continue
 
-        tahmin = guess_ai_tool(sonuc.file_path, kod)
+        guess = guess_ai_tool(result.file_path, code)
 
-        # DB'ye kaydet — en son file_score kaydını güncelle
+        # Save to DB — update the most recent file_score record
         try:
             with get_connection(db_path) as conn:
                 conn.execute(
@@ -164,17 +161,17 @@ def analyze_repo_tools(
                           ORDER BY id DESC LIMIT 1
                       )
                     """,
-                    (tahmin.arac, sonuc.file_path, sonuc.file_path),
+                    (guess.tool, result.file_path, result.file_path),
                 )
         except Exception:
             pass
 
-        if tahmin.arac in arac_istatistik:
-            arac_istatistik[tahmin.arac]["ai_prob"].append(sonuc.ai_probability)
+        if guess.tool in tool_stats:
+            tool_stats[guess.tool]["ai_prob"].append(result.ai_probability)
         else:
-            arac_istatistik["unknown"]["ai_prob"].append(sonuc.ai_probability)
+            tool_stats["unknown"]["ai_prob"].append(result.ai_probability)
 
-    # DB'den anlama skorlarını araç bazlı topla
+    # Collect understanding scores per tool from DB
     try:
         with get_connection(db_path) as conn:
             rows = conn.execute(
@@ -186,38 +183,38 @@ def analyze_repo_tools(
                 """
             ).fetchall()
             for r in rows:
-                arac = r["ai_tool_guess"] or "unknown"
-                if arac in arac_istatistik:
-                    arac_istatistik[arac]["understanding"].append(
+                tool = r["ai_tool_guess"] or "unknown"
+                if tool in tool_stats:
+                    tool_stats[tool]["understanding"].append(
                         float(r["understanding_score"])
                     )
     except Exception:
         pass
 
-    # Sonuçları hesapla
-    cikti: dict[str, dict[str, float]] = {}
-    for arac, veri in arac_istatistik.items():
-        if not veri["ai_prob"]:
+    # Compute output
+    output: dict[str, dict[str, float]] = {}
+    for tool, data in tool_stats.items():
+        if not data["ai_prob"]:
             continue
-        avg_ai = sum(veri["ai_prob"]) / len(veri["ai_prob"])
+        avg_ai = sum(data["ai_prob"]) / len(data["ai_prob"])
         avg_und = (
-            sum(veri["understanding"]) / len(veri["understanding"])
-            if veri["understanding"] else None
+            sum(data["understanding"]) / len(data["understanding"])
+            if data["understanding"] else None
         )
-        cikti[arac] = {
-            "dosya_sayisi": len(veri["ai_prob"]),
+        output[tool] = {
+            "file_count": len(data["ai_prob"]),  # kept for API compat
             "avg_ai_probability": round(avg_ai, 3),
             "avg_understanding": round(avg_und, 2) if avg_und is not None else None,
         }
 
-    return cikti
+    return output
 
 
 def compare_tools_in_repo(repo_path: Path, db_path: Path) -> dict:
     """
-    Repo genelinde araç bazlı ortalama anlama skoru ve AI olasılığı karşılaştırması.
+    Compare average understanding scores and AI probabilities per tool across the repo.
 
     Returns:
-        {"copilot": {...}, "cursor": {...}, ...} sözlüğü
+        {"copilot": {...}, "cursor": {...}, ...} dict
     """
     return analyze_repo_tools(repo_path, db_path)

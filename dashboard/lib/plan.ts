@@ -1,21 +1,21 @@
 /**
- * CodeDNA plan sistemi — özellik kısıtları ve plan yönetimi.
+ * CodeDNA plan system — feature restrictions and plan management.
  */
 
 export type Plan = "free" | "pro" | "team" | "enterprise";
 
 export interface PlanLimits {
-  max_repos: number;        // -1 = sınırsız
-  max_files_scan: number;   // -1 = sınırsız
-  history_days: number;     // -1 = sınırsız
+  max_repos: number;        // -1 = unlimited
+  max_files_scan: number;   // -1 = unlimited
+  history_days: number;     // -1 = unlimited
   dashboard_access: boolean;
   github_actions: boolean;
   slack_notify: boolean;
-  bus_factor: boolean;      // Faz 5
-  sprint_health: boolean;   // Faz 6
-  ai_comparison: boolean;   // Faz 7
-  team_members: number;     // -1 = sınırsız
-  interview_tool: boolean;  // Faz 8
+  bus_factor: boolean;      // Phase 5
+  sprint_health: boolean;   // Phase 6
+  ai_comparison: boolean;   // Phase 7
+  team_members: number;     // -1 = unlimited
+  interview_tool: boolean;  // Phase 8
 }
 
 export const PLAN_LIMITS: Record<Plan, PlanLimits> = {
@@ -75,7 +75,7 @@ export const PLAN_LIMITS: Record<Plan, PlanLimits> = {
 
 const STORAGE_KEY = "codedna-plan";
 
-/** Mevcut planı localStorage'dan oku (varsayılan: free) */
+/** Read current plan from localStorage (default: free) */
 export function getCurrentPlan(): Plan {
   if (typeof window === "undefined") return "free";
   const stored = localStorage.getItem(STORAGE_KEY) as Plan | null;
@@ -83,14 +83,14 @@ export function getCurrentPlan(): Plan {
   return "free";
 }
 
-/** Planı kaydet (geliştirme/demo için) */
+/** Save plan (for development/demo) */
 export function setPlan(plan: Plan): void {
   if (typeof window !== "undefined") {
     localStorage.setItem(STORAGE_KEY, plan);
   }
 }
 
-/** Belirli bir özelliğin mevcut planda aktif olup olmadığını kontrol et */
+/** Check whether a feature is active on the current plan */
 export function isFeatureAvailable(
   feature: keyof PlanLimits,
   plan: Plan = getCurrentPlan()
@@ -102,7 +102,7 @@ export function isFeatureAvailable(
   return false;
 }
 
-/** Planın yükseltme gerektirip gerektirmediğini kontrol et */
+/** Check whether a plan upgrade is required */
 export function needsUpgrade(
   feature: keyof PlanLimits,
   plan: Plan = getCurrentPlan()
@@ -110,10 +110,10 @@ export function needsUpgrade(
   return !isFeatureAvailable(feature, plan);
 }
 
-/** Bir özellik için minimum gereken planı döndür */
+/** Return the minimum plan required for a feature */
 export function minimumPlanFor(feature: keyof PlanLimits): Plan {
-  const sirali: Plan[] = ["free", "pro", "team", "enterprise"];
-  for (const plan of sirali) {
+  const ordered: Plan[] = ["free", "pro", "team", "enterprise"];
+  for (const plan of ordered) {
     const value = PLAN_LIMITS[plan][feature];
     if (typeof value === "boolean" && value) return plan;
     if (typeof value === "number" && value !== 0) return plan;

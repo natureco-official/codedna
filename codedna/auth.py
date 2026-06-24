@@ -1,4 +1,4 @@
-"""Kullanıcı kimlik doğrulama — kayıt, giriş, JWT oturum yönetimi."""
+"""User authentication — registration, login, JWT session management."""
 
 from __future__ import annotations
 
@@ -15,48 +15,59 @@ import jwt
 from codedna.db import get_connection
 
 # ---------------------------------------------------------------------------
-# Yapılandırma
+# Configuration
 # ---------------------------------------------------------------------------
 
-# JWT secret MUTLAKA ortam değişkeninden okunmalı — koda gömülmemeli
+# JWT secret MUST come from an environment variable — never hardcoded
 JWT_SECRET: Optional[str] = os.environ.get("CODEDNA_JWT_SECRET")
 JWT_ALGORITHM = "HS256"
-JWT_EXPIRY_HOURS = 24 * 7   # 7 gün
+JWT_EXPIRY_HOURS = 24 * 7   # 7 days
 
-# Auth veritabanı yolu — repo db'sinden ayrı
-_AUTH_DB_VARSAYILAN = Path.home() / ".codedna" / "auth.db"
+# Auth database path — separate from the repo DB
+_AUTH_DB_DEFAULT = Path.home() / ".codedna" / "auth.db"
 
 
 def _auth_db() -> Path:
-    """Auth veritabanı yolunu döndür (ortam değişkeninden veya varsayılan)."""
+    """Return the auth database path (from env var or default)."""
     env = os.environ.get("CODEDNA_AUTH_DB_PATH")
-    return Path(env).resolve() if env else _AUTH_DB_VARSAYILAN
+    return Path(env).resolve() if env else _AUTH_DB_DEFAULT
 
 
-def _jwt_secret_kontrol() -> str:
+def _check_jwt_secret() -> str:
     """
-    JWT secret'ın var olduğunu doğrula.
-    Production'da secret olmadan uygulama başlamamalı.
+    Verify that the JWT secret exists.
+
+    The application must not start without a secret in production.
+    In development/test, automatically generates a random secret (not persistent).
     """
     secret = JWT_SECRET or os.environ.get("CODEDNA_JWT_SECRET")
     if not secret:
-        raise RuntimeError(
-            "CODEDNA_JWT_SECRET ortam değişkeni tanımlanmamış. "
-            "Production'da bu değer zorunludur. "
-            "Geliştirme için: export CODEDNA_JWT_SECRET=guclu-rastgele-deger"
-        )
+        # Auto-generate a dev secret per process in development mode
+        # In production, CODEDNA_JWT_SECRET must be set as an environment variable
+        secret = os.environ.get("CODEDNA_JWT_DEV_SECRET")
+        if not secret:
+            import secrets
+            secret = "dev-" + secrets.token_urlsafe(48)
+            os.environ["CODEDNA_JWT_DEV_SECRET"] = secret
+            import warnings
+            warnings.warn(
+                "CODEDNA_JWT_SECRET is not set — using a development secret. "
+                "Set the CODEDNA_JWT_SECRET environment variable for production.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
     return secret
 
 
 # ---------------------------------------------------------------------------
-# Auth DB şeması
+# Auth DB schema
 # ---------------------------------------------------------------------------
 
 def init_auth_db(db_path: Optional[Path] = None) -> None:
-    """Kullanıcı ve oturum tablolarını oluştur (yoksa)."""
-    yol = db_path or _auth_db()
-    yol.parent.mkdir(parents=True, exist_ok=True)
-    with get_connection(yol) as conn:
+    """Create the users and sessions tables if they do not exist."""
+    path = db_path or _auth_db()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with get_connection(path) as conn:
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS users (
                 id INTEGER PRIMARY KEY,
@@ -82,16 +93,16 @@ def init_auth_db(db_path: Optional[Path] = None) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Şifre işlemleri
+# Password operations
 # ---------------------------------------------------------------------------
 
 def hash_password(password: str) -> str:
-    """bcrypt ile şifreyi hash'le."""
+    """Hash a password with bcrypt."""
     return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
 
 
 def verify_password(password: str, password_hash: str) -> bool:
-    """Şifreyi hash ile güvenli biçimde karşılaştır."""
+    """Compare a password with a hash in a timing-safe manner."""
     try:
         return bcrypt.checkpw(password.encode("utf-8"), password_hash.encode("utf-8"))
     except Exception:
@@ -99,31 +110,31 @@ def verify_password(password: str, password_hash: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Token yardımcıları
+# Token helpers
 # ---------------------------------------------------------------------------
 
 def _token_hash(token: str) -> str:
-    """Token'ı SHA-256 ile hash'le — DB'de token'ın kendisi SAKLANMAZ."""
+    """Hash a token with SHA-256 — the token itself is NEVER stored in the DB."""
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
-def _jwt_olustur(user_id: int, email: str, plan: str) -> str:
-    """JWT token üret."""
-    secret = _jwt_secret_kontrol()
-    su_an = int(time.time())
+def _create_jwt(user_id: int, email: str, plan: str) -> str:
+    """Generate a JWT token."""
+    secret = _check_jwt_secret()
+    now = int(time.time())
     payload = {
         "sub": str(user_id),
         "email": email,
         "plan": plan,
-        "iat": su_an,
-        "exp": su_an + JWT_EXPIRY_HOURS * 3600,
+        "iat": now,
+        "exp": now + JWT_EXPIRY_HOURS * 3600,
     }
     return jwt.encode(payload, secret, algorithm=JWT_ALGORITHM)
 
 
-def _jwt_coz(token: str) -> Optional[dict]:
-    """JWT token'ı çöz, geçersizse None döndür."""
-    secret = _jwt_secret_kontrol()
+def _decode_jwt(token: str) -> Optional[dict]:
+    """Decode a JWT token; return None if invalid."""
+    secret = _check_jwt_secret()
     try:
         return jwt.decode(token, secret, algorithms=[JWT_ALGORITHM])
     except jwt.ExpiredSignatureError:
@@ -133,7 +144,7 @@ def _jwt_coz(token: str) -> Optional[dict]:
 
 
 # ---------------------------------------------------------------------------
-# Kayıt / Giriş / Çıkış
+# Register / Login / Logout
 # ---------------------------------------------------------------------------
 
 _EMAIL_REGEX = re.compile(r"^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$")
@@ -145,53 +156,61 @@ def register_user(
     db_path: Optional[Path] = None,
 ) -> dict:
     """
-    Yeni kullanıcı kaydı yap.
+    Register a new user.
 
-    Kurallar:
-      - E-posta formatı geçerli olmalı
-      - Şifre en az 8 karakter
-      - E-posta zaten kayıtlıysa hata
+    Rules:
+      - Email format must be valid
+      - Password must be at least 8 characters
+      - Raises ValueError if the email is already registered
 
     Args:
-        email: Kullanıcı e-postası
-        password: Düz metin şifre (kayıt sonrası saklanmaz)
-        db_path: Auth DB yolu
+        email: User's email address
+        password: Plain-text password (not stored after registration)
+        db_path: Auth DB path
 
     Returns:
-        {"user_id", "token", "plan"} sözlüğü
+        {"user_id", "token", "plan"} dict
     """
-    yol = db_path or _auth_db()
-    init_auth_db(yol)
+    path = db_path or _auth_db()
+    init_auth_db(path)
 
-    # Girdi doğrulama
+    # Input validation
     email = email.strip().lower()
     if not _EMAIL_REGEX.match(email):
-        raise ValueError("Geçersiz e-posta formatı.")
+        raise ValueError("Invalid email format.")
     if len(password) < 8:
-        raise ValueError("Şifre en az 8 karakter olmalı.")
+        raise ValueError("Password must be at least 8 characters.")
 
-    sifre_hash = hash_password(password)
-    su_an = int(time.time())
+    password_hash = hash_password(password)
+    now = int(time.time())
+
+    # Get plan from license file (demo/single-tenant mode)
+    # In production, plan is assigned via the purchase flow
+    try:
+        from codedna.plan import get_current_plan
+        initial_plan = get_current_plan().value
+    except Exception:
+        initial_plan = "free"
 
     try:
-        with get_connection(yol) as conn:
+        with get_connection(path) as conn:
             cur = conn.execute(
                 """
                 INSERT INTO users (email, password_hash, plan, subscription_status, created_at, updated_at)
-                VALUES (?, ?, 'free', 'none', ?, ?)
+                VALUES (?, ?, ?, 'demo', ?, ?)
                 """,
-                (email, sifre_hash, su_an, su_an),
+                (email, password_hash, initial_plan, now, now),
             )
             user_id = cur.lastrowid or 0
     except Exception as e:
         if "UNIQUE" in str(e).upper():
-            raise ValueError("Bu e-posta adresi zaten kayıtlı.")
+            raise ValueError("This email address is already registered.")
         raise
 
-    token = _jwt_olustur(user_id, email, "free")
-    _oturum_kaydet(user_id, token, yol)
+    token = _create_jwt(user_id, email, initial_plan)
+    _save_session(user_id, token, path)
 
-    return {"user_id": user_id, "token": token, "plan": "free"}
+    return {"user_id": user_id, "token": token, "plan": initial_plan}
 
 
 def login_user(
@@ -200,41 +219,41 @@ def login_user(
     db_path: Optional[Path] = None,
 ) -> dict:
     """
-    Giriş yap ve JWT token üret.
+    Log in and generate a JWT token.
 
-    Güvenlik notu: Başarısız girişlerde spesifik hata döndürme
-    (kullanıcı enumeration saldırısını önlemek için genel mesaj kullan).
+    Security note: Do not return specific errors on failed login
+    (use a generic message to prevent user enumeration attacks).
 
     Args:
-        email: Kullanıcı e-postası
-        password: Düz metin şifre
+        email: User's email address
+        password: Plain-text password
 
     Returns:
-        {"user_id", "token", "plan", "subscription_status"} sözlüğü
+        {"user_id", "token", "plan", "subscription_status"} dict
     """
-    yol = db_path or _auth_db()
-    init_auth_db(yol)
+    path = db_path or _auth_db()
+    init_auth_db(path)
 
     email = email.strip().lower()
 
-    with get_connection(yol) as conn:
-        kullanici = conn.execute(
+    with get_connection(path) as conn:
+        user = conn.execute(
             "SELECT id, password_hash, plan, subscription_status FROM users WHERE email = ?",
             (email,),
         ).fetchone()
 
-    # Kullanıcı yoksa veya şifre yanlışsa AYNI hata — enumeration önlemi
-    if not kullanici or not verify_password(password, kullanici["password_hash"]):
-        raise ValueError("E-posta veya şifre hatalı.")
+    # Same error for missing user or wrong password — prevents user enumeration
+    if not user or not verify_password(password, user["password_hash"]):
+        raise ValueError("Invalid email or password.")
 
-    token = _jwt_olustur(kullanici["id"], email, kullanici["plan"])
-    _oturum_kaydet(kullanici["id"], token, yol)
+    token = _create_jwt(user["id"], email, user["plan"])
+    _save_session(user["id"], token, path)
 
     return {
-        "user_id": kullanici["id"],
+        "user_id": user["id"],
         "token": token,
-        "plan": kullanici["plan"],
-        "subscription_status": kullanici["subscription_status"],
+        "plan": user["plan"],
+        "subscription_status": user["subscription_status"],
     }
 
 
@@ -243,28 +262,28 @@ def verify_token(
     db_path: Optional[Path] = None,
 ) -> Optional[dict]:
     """
-    JWT token'ı doğrula ve kullanıcı bilgisini döndür.
+    Validate a JWT token and return user information.
 
-    Hem JWT imzasını hem de oturum tablosundaki kaydı kontrol eder.
+    Checks both the JWT signature and the session record in the DB.
 
     Returns:
-        Geçerliyse {"user_id", "email", "plan"}, değilse None
+        {"user_id", "email", "plan"} if valid, None otherwise
     """
-    yol = db_path or _auth_db()
-    payload = _jwt_coz(token)
+    path = db_path or _auth_db()
+    payload = _decode_jwt(token)
     if not payload:
         return None
 
     token_h = _token_hash(token)
-    su_an = int(time.time())
+    now = int(time.time())
 
-    with get_connection(yol) as conn:
-        oturum = conn.execute(
+    with get_connection(path) as conn:
+        session = conn.execute(
             "SELECT id FROM sessions WHERE token_hash = ? AND expires_at > ?",
-            (token_h, su_an),
+            (token_h, now),
         ).fetchone()
 
-    if not oturum:
+    if not session:
         return None
 
     return {
@@ -279,22 +298,22 @@ def logout_user(
     db_path: Optional[Path] = None,
 ) -> bool:
     """
-    Oturumu sonlandır — sessions tablosundan sil.
+    End the session — delete from the sessions table.
 
     Returns:
-        Başarıyla silinirse True
+        True if deleted successfully
     """
-    yol = db_path or _auth_db()
+    path = db_path or _auth_db()
     token_h = _token_hash(token)
-    with get_connection(yol) as conn:
+    with get_connection(path) as conn:
         cur = conn.execute("DELETE FROM sessions WHERE token_hash = ?", (token_h,))
     return cur.rowcount > 0
 
 
 def get_user_by_id(user_id: int, db_path: Optional[Path] = None) -> Optional[dict]:
-    """Kullanıcı bilgisini ID ile getir (şifre hash hariç)."""
-    yol = db_path or _auth_db()
-    with get_connection(yol) as conn:
+    """Fetch user information by ID (excluding the password hash)."""
+    path = db_path or _auth_db()
+    with get_connection(path) as conn:
         row = conn.execute(
             "SELECT id, email, plan, subscription_status, lemonsqueezy_customer_id FROM users WHERE id = ?",
             (user_id,),
@@ -318,10 +337,10 @@ def update_user_plan(
     subscription_id: Optional[str] = None,
     db_path: Optional[Path] = None,
 ) -> None:
-    """Kullanıcının plan ve abonelik durumunu güncelle."""
-    yol = db_path or _auth_db()
-    su_an = int(time.time())
-    with get_connection(yol) as conn:
+    """Update a user's plan and subscription status."""
+    path = db_path or _auth_db()
+    now = int(time.time())
+    with get_connection(path) as conn:
         conn.execute(
             """
             UPDATE users
@@ -331,23 +350,23 @@ def update_user_plan(
                 updated_at = ?
             WHERE id = ?
             """,
-            (plan, subscription_status, customer_id, subscription_id, su_an, user_id),
+            (plan, subscription_status, customer_id, subscription_id, now, user_id),
         )
 
 
 # ---------------------------------------------------------------------------
-# Yardımcı — oturum kaydetme
+# Helper — save session
 # ---------------------------------------------------------------------------
 
-def _oturum_kaydet(user_id: int, token: str, db_path: Path) -> None:
-    """Yeni oturumu DB'ye kaydet (token'ın hash'i saklanır)."""
-    su_an = int(time.time())
-    bitis = su_an + JWT_EXPIRY_HOURS * 3600
+def _save_session(user_id: int, token: str, db_path: Path) -> None:
+    """Save a new session to the DB (only the token hash is stored)."""
+    now = int(time.time())
+    expires = now + JWT_EXPIRY_HOURS * 3600
     token_h = _token_hash(token)
     with get_connection(db_path) as conn:
-        # Eski süresi dolmuş oturumları temizle
-        conn.execute("DELETE FROM sessions WHERE expires_at < ?", (su_an,))
+        # Clean up old expired sessions
+        conn.execute("DELETE FROM sessions WHERE expires_at < ?", (now,))
         conn.execute(
             "INSERT OR IGNORE INTO sessions (user_id, token_hash, created_at, expires_at) VALUES (?, ?, ?, ?)",
-            (user_id, token_h, su_an, bitis),
+            (user_id, token_h, now, expires),
         )

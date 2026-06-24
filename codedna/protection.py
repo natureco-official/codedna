@@ -1,4 +1,4 @@
-"""Kritik modüller için anlama eşiği izleme — kod sahipliği sigortası."""
+"""Understanding threshold monitoring for critical modules — code ownership insurance."""
 
 from __future__ import annotations
 
@@ -9,25 +9,25 @@ from typing import Optional
 
 from codedna.db import get_connection
 
-# Durum sabitleri
-_DURUM_IHLAL = "İHLAL"
-_DURUM_GUVENLI = "GÜVENLİ"
-_DURUM_BILINMIYOR = "BİLİNMİYOR"
+# Status constants
+_STATUS_VIOLATION = "VIOLATION"
+_STATUS_SAFE      = "SAFE"
+_STATUS_UNKNOWN   = "UNKNOWN"
 
-# Aynı modül için uyarılar arası minimum süre (spam önleme, saniye)
-_MIN_UYARI_ARASI = 3600  # 1 saat
+# Minimum time between warnings for the same module (anti-spam, seconds)
+_MIN_ALERT_INTERVAL = 3600  # 1 hour
 
 
 @dataclass
-class ModulDurumu:
-    """Tek korumalı modülün anlık durumu."""
+class ModuleStatus:
+    """Current status of a single protected module."""
 
-    dosya_yolu: str
-    etiket: str
-    esik: float
-    mevcut_skor: Optional[float]
-    durum: str   # İHLAL / GÜVENLİ / BİLİNMİYOR
-    aktif: bool
+    file_path: str     # kept for API compatibility (was: dosya_yolu)
+    label: str         # kept for API compatibility (was: etiket)
+    threshold: float    # kept for API compatibility (was: esik)
+    current_score: Optional[float]  # kept for API compatibility (was: mevcut_skor)
+    status: str          # VIOLATION / SAFE / UNKNOWN
+    active: bool
 
 
 def protect_module(
@@ -38,17 +38,17 @@ def protect_module(
     db_path: Path,
 ) -> int:
     """
-    Bir dosyayı korumalı modül olarak işaretle.
+    Mark a file as a protected module.
 
     Args:
-        file_path: Korunacak dosyanın yolu
-        threshold: Minimum anlama skoru eşiği (1.0–5.0)
-        label: İnsan okunabilir etiket (örn. "Ödeme Sistemi")
-        author: Korumayı ekleyen kişi
-        db_path: SQLite veritabanı yolu
+        file_path: Path of the file to protect
+        threshold: Minimum understanding score threshold (1.0–5.0)
+        label: Human-readable label (e.g. "Payment System")
+        author: Who added the protection
+        db_path: SQLite database path
 
     Returns:
-        Yeni kaydın id'si
+        New record id
     """
     with get_connection(db_path) as conn:
         cur = conn.execute(
@@ -70,14 +70,14 @@ def protect_module(
 
 def unprotect_module(file_path: str, db_path: Path) -> bool:
     """
-    Korumayı kaldır (is_active = 0 yap, kaydı silme).
+    Remove protection (set is_active = 0, do not delete the record).
 
     Args:
-        file_path: Koruma kaldırılacak dosya yolu
-        db_path: SQLite veritabanı yolu
+        file_path: Path of the file to unprotect
+        db_path: SQLite database path
 
     Returns:
-        Kayıt bulunup güncellendiyse True
+        True if a record was found and updated
     """
     with get_connection(db_path) as conn:
         cur = conn.execute(
@@ -87,8 +87,8 @@ def unprotect_module(file_path: str, db_path: Path) -> bool:
         return cur.rowcount > 0
 
 
-def _dosya_mevcut_skoru(file_path: str, db_path: Path) -> Optional[float]:
-    """DB'den dosyanın en güncel anlama skorunu çek."""
+def _get_current_score(file_path: str, db_path: Path) -> Optional[float]:
+    """Fetch the most recent understanding score for a file from the DB."""
     try:
         with get_connection(db_path) as conn:
             row = conn.execute(
@@ -107,16 +107,16 @@ def _dosya_mevcut_skoru(file_path: str, db_path: Path) -> Optional[float]:
         return None
 
 
-def check_protected_modules(db_path: Path) -> list[ModulDurumu]:
+def check_protected_modules(db_path: Path) -> list[ModuleStatus]:
     """
-    Tüm aktif korumalı modülleri kontrol et, anlama eşiğini aşıp aşmadığını belirle.
+    Check all active protected modules and determine whether they meet their threshold.
 
     Returns:
-        ModulDurumu listesi
+        List of ModuleStatus
     """
     try:
         with get_connection(db_path) as conn:
-            kayitlar = conn.execute(
+            records = conn.execute(
                 """
                 SELECT file_path, min_understanding_threshold, label, is_active
                 FROM protected_modules
@@ -127,85 +127,85 @@ def check_protected_modules(db_path: Path) -> list[ModulDurumu]:
     except Exception:
         return []
 
-    sonuclar: list[ModulDurumu] = []
-    for k in kayitlar:
-        mevcut = _dosya_mevcut_skoru(k["file_path"], db_path)
+    results: list[ModuleStatus] = []
+    for r in records:
+        current = _get_current_score(r["file_path"], db_path)
 
-        if mevcut is None:
-            durum = _DURUM_BILINMIYOR
-        elif mevcut >= k["min_understanding_threshold"]:
-            durum = _DURUM_GUVENLI
+        if current is None:
+            status = _STATUS_UNKNOWN
+        elif current >= r["min_understanding_threshold"]:
+            status = _STATUS_SAFE
         else:
-            durum = _DURUM_IHLAL
+            status = _STATUS_VIOLATION
 
-        sonuclar.append(
-            ModulDurumu(
-                dosya_yolu=k["file_path"],
-                etiket=k["label"] or k["file_path"],
-                esik=k["min_understanding_threshold"],
-                mevcut_skor=round(mevcut, 2) if mevcut is not None else None,
-                durum=durum,
-                aktif=bool(k["is_active"]),
+        results.append(
+            ModuleStatus(
+                file_path=r["file_path"],
+                label=r["label"] or r["file_path"],
+                threshold=r["min_understanding_threshold"],
+                current_score=round(current, 2) if current is not None else None,
+                status=status,
+                active=bool(r["is_active"]),
             )
         )
 
-    return sonuclar
+    return results
 
 
-def get_violations(db_path: Path) -> list[ModulDurumu]:
+def get_violations(db_path: Path) -> list[ModuleStatus]:
     """
-    Sadece eşik altına düşmüş (İHLAL durumundaki) modülleri döndür.
+    Return only modules that have fallen below their threshold (VIOLATION status).
 
     Returns:
-        İhlaldeki ModulDurumu listesi
+        List of ModuleStatus in violation
     """
-    return [m for m in check_protected_modules(db_path) if m.durum == _DURUM_IHLAL]
+    return [m for m in check_protected_modules(db_path) if m.status == _STATUS_VIOLATION]
 
 
-def ihlal_uyarisi_goster(db_path: Path) -> list[str]:
+def show_violation_warnings(db_path: Path) -> list[str]:
     """
-    Post-commit hook için ihlal uyarılarını döndür.
-    Spam önlemek için son 1 saat içinde uyarı verilen modülleri atla.
+    Return violation warnings for the post-commit hook.
+    Skips modules that were already warned about within the last hour (anti-spam).
 
     Returns:
-        Uyarı mesajı listesi (boşsa ihlal yok)
+        List of warning messages (empty = no violations)
     """
-    ihlaller = get_violations(db_path)
-    if not ihlaller:
+    violations = get_violations(db_path)
+    if not violations:
         return []
 
-    su_an = int(time.time())
-    uyarilar: list[str] = []
+    now = int(time.time())
+    warnings: list[str] = []
 
-    for ihlal in ihlaller:
-        # Son uyarı zamanını kontrol et
+    for v in violations:
+        # Check last alert time
         try:
             with get_connection(db_path) as conn:
                 row = conn.execute(
                     "SELECT last_alert_at FROM protected_modules WHERE file_path = ?",
-                    (ihlal.dosya_yolu,),
+                    (v.file_path,),
                 ).fetchone()
-            son_uyari = row["last_alert_at"] if row and row["last_alert_at"] else 0
+            last_alert = row["last_alert_at"] if row and row["last_alert_at"] else 0
         except Exception:
-            son_uyari = 0
+            last_alert = 0
 
-        if su_an - son_uyari < _MIN_UYARI_ARASI:
+        if now - last_alert < _MIN_ALERT_INTERVAL:
             continue
 
-        # Uyarı zamanını güncelle
+        # Update alert time
         try:
             with get_connection(db_path) as conn:
                 conn.execute(
                     "UPDATE protected_modules SET last_alert_at = ? WHERE file_path = ?",
-                    (su_an, ihlal.dosya_yolu),
+                    (now, v.file_path),
                 )
         except Exception:
             pass
 
-        skor_str = f"{ihlal.mevcut_skor:.1f}" if ihlal.mevcut_skor else "?"
-        uyarilar.append(
-            f"⚠️  UYARI: {ihlal.dosya_yolu} artık güvenle değiştirilemiyor "
-            f"(anlama: {skor_str} < eşik: {ihlal.esik:.1f})"
+        score_str = f"{v.current_score:.1f}" if v.current_score else "?"
+        warnings.append(
+            f"⚠️  WARNING: {v.file_path} can no longer be safely modified "
+            f"(understanding: {score_str} < threshold: {v.threshold:.1f})"
         )
 
-    return uyarilar
+    return warnings

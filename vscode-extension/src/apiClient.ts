@@ -1,6 +1,6 @@
 /**
- * CodeDNA API client — FastAPI'ye (codedna serve) istek gönderir.
- * Sunucu kapalıysa sessizce null döndürür, kullanıcıya popup spam yapmaz.
+ * CodeDNA API client — sends requests to FastAPI (codedna serve).
+ * Returns null silently when the server is down, no popup spam.
  */
 
 import * as https from "https";
@@ -8,21 +8,21 @@ import * as http from "http";
 import { URL } from "url";
 
 export interface FileAnalysisResult {
-  dosya_yolu: string;
-  ai_yuzdesi: number;
-  karmasiklik_etiketi: string;
-  toplam_satir: number;
+  file_path: string;
+  ai_percentage: number;
+  complexity_label: string;
+  total_lines: number;
 }
 
 export interface RepoSummary {
-  toplam_dosya: number;
-  ortalama_ai_yuzdesi: number | null;
-  risk_seviyesi: string;
+  total_files: number;
+  avg_ai_percentage: number | null;
+  risk_level: string;
 }
 
 /**
- * Belirtilen endpoint'ten JSON veri çek.
- * Hata durumunda null döndür — exception fırlatma.
+ * Fetch JSON data from the specified endpoint.
+ * Returns null on error — does not throw.
  */
 async function apiFetch<T>(baseUrl: string, path: string): Promise<T | null> {
   return new Promise((resolve) => {
@@ -57,43 +57,43 @@ async function apiFetch<T>(baseUrl: string, path: string): Promise<T | null> {
   });
 }
 
-/** Sunucunun ayakta olup olmadığını kontrol et. */
+/** Check whether the server is up. */
 export async function checkHealth(apiUrl: string): Promise<boolean> {
-  const result = await apiFetch<{ durum: string }>(apiUrl, "/health");
-  return result?.durum === "çalışıyor";
+  const result = await apiFetch<{ status: string }>(apiUrl, "/health");
+  return result?.status === "running";
 }
 
-/** Repo genel özetini al. */
+/** Get a general repo summary. */
 export async function getRepoSummary(apiUrl: string): Promise<RepoSummary | null> {
   return apiFetch<RepoSummary>(apiUrl, "/repo/summary");
 }
 
 /**
- * Belirli bir dosyanın analiz sonucunu al.
- * /repo/files endpoint'inden dosya yoluyla filtrele.
+ * Get analysis result for a specific file.
+ * Filters by file path from the /repo/files endpoint.
  */
 export async function getFileAnalysis(
   apiUrl: string,
   filePath: string
 ): Promise<FileAnalysisResult | null> {
-  const result = await apiFetch<{ dosyalar: FileAnalysisResult[] }>(
+  const result = await apiFetch<{ files: FileAnalysisResult[] }>(
     apiUrl,
-    "/repo/files?max_dosya=500"
+    "/repo/files?max_files=500"
   );
 
-  if (!result?.dosyalar) return null;
+  if (!result?.files) return null;
 
-  // Tam yol veya son iki parça ile eşleştir
+  // Match by full path or last two path segments
   const parts = filePath.replace(/\\/g, "/").split("/");
   const tail2 = parts.slice(-2).join("/");
   const tail1 = parts.slice(-1)[0];
 
   return (
-    result.dosyalar.find(
-      (d) =>
-        d.dosya_yolu === filePath ||
-        d.dosya_yolu.endsWith(tail2) ||
-        d.dosya_yolu.endsWith(tail1)
+    result.files.find(
+      (f) =>
+        f.file_path === filePath ||
+        f.file_path.endsWith(tail2) ||
+        f.file_path.endsWith(tail1)
     ) ?? null
   );
 }

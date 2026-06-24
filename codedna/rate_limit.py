@@ -1,9 +1,9 @@
 """
-Basit in-memory rate limiter — brute-force koruması için.
+Simple in-memory rate limiter — for brute-force protection.
 
-Production-grade değil (çok process ortamında çalışmaz, sunucu yeniden
-başlatıldığında sıfırlanır). Temel bir koruma katmanı sağlar.
-Production için Redis tabanlı bir çözüm tercih edilmeli.
+Not production-grade (does not work across multiple processes, resets on
+server restart). Provides a basic protection layer.
+For production, a Redis-based solution is preferred.
 """
 
 from __future__ import annotations
@@ -14,10 +14,10 @@ from threading import Lock
 from typing import Optional
 
 
-# Yapılandırma
-_MAX_DENEME = 5        # Bu süre içinde maksimum başarısız deneme
-_PENCERE_SANIYE = 300  # 5 dakikalık pencere
-_KILIT_SANIYE = 60     # Kilitlenme süresi (saniye)
+# Configuration
+_MAX_ATTEMPTS = 5       # Maximum failed attempts within the window
+_WINDOW_SECONDS = 300   # 5-minute window
+_LOCK_SECONDS = 60      # Lockout duration (seconds)
 
 
 class RateLimiter:
@@ -25,59 +25,59 @@ class RateLimiter:
 
     def __init__(
         self,
-        max_deneme: int = _MAX_DENEME,
-        pencere: int = _PENCERE_SANIYE,
-        kilit: int = _KILIT_SANIYE,
+        max_attempts: int = _MAX_ATTEMPTS,
+        window: int = _WINDOW_SECONDS,
+        lockout: int = _LOCK_SECONDS,
     ) -> None:
-        self._max_deneme = max_deneme
-        self._pencere = pencere
-        self._kilit = kilit
-        # {anahtar: [(timestamp, basarisiz_mi), ...]}
-        self._kayitlar: dict[str, list[tuple[int, bool]]] = defaultdict(list)
-        self._kilitler: dict[str, int] = {}  # {anahtar: kilit_bitis_zamani}
+        self._max_attempts = max_attempts
+        self._window = window
+        self._lockout = lockout
+        # {key: [(timestamp, is_failure), ...]}
+        self._records: dict[str, list[tuple[int, bool]]] = defaultdict(list)
+        self._locks: dict[str, int] = {}  # {key: lock_expiry_time}
         self._lock = Lock()
 
-    def kontrol_et(self, anahtar: str) -> tuple[bool, Optional[int]]:
+    def kontrol_et(self, key: str) -> tuple[bool, Optional[int]]:
         """
-        İsteğe izin verip vermeyeceğini kontrol et.
+        Check whether to allow the request.
 
         Args:
-            anahtar: IP adresi veya e-posta gibi tanımlayıcı
+            key: Identifier such as IP address or email
 
         Returns:
-            (izin_var, kalan_saniye) — kilitliyse kalan_saniye > 0
+            (allowed, remaining_seconds) — remaining_seconds > 0 when locked
         """
-        su_an = int(time.time())
+        now = int(time.time())
         with self._lock:
-            # Kilit kontrolü
-            kilit_bitis = self._kilitler.get(anahtar, 0)
-            if su_an < kilit_bitis:
-                return False, kilit_bitis - su_an
+            # Lock check
+            lock_expiry = self._locks.get(key, 0)
+            if now < lock_expiry:
+                return False, lock_expiry - now
 
-            # Eski kayıtları temizle
-            pencere_basi = su_an - self._pencere
-            self._kayitlar[anahtar] = [
-                (ts, basarisiz)
-                for ts, basarisiz in self._kayitlar[anahtar]
-                if ts > pencere_basi
+            # Clear old records
+            window_start = now - self._window
+            self._records[key] = [
+                (ts, failed)
+                for ts, failed in self._records[key]
+                if ts > window_start
             ]
             return True, None
 
-    def basarisiz_kaydet(self, anahtar: str) -> None:
-        """Başarısız denemeyi kaydet, gerekirse kilitle."""
-        su_an = int(time.time())
+    def basarisiz_kaydet(self, key: str) -> None:
+        """Record a failed attempt, lock if threshold reached."""
+        now = int(time.time())
         with self._lock:
-            self._kayitlar[anahtar].append((su_an, True))
-            basarisiz = sum(1 for _, b in self._kayitlar[anahtar] if b)
-            if basarisiz >= self._max_deneme:
-                self._kilitler[anahtar] = su_an + self._kilit
+            self._records[key].append((now, True))
+            failures = sum(1 for _, failed in self._records[key] if failed)
+            if failures >= self._max_attempts:
+                self._locks[key] = now + self._lockout
 
-    def basarili_kaydet(self, anahtar: str) -> None:
-        """Başarılı girişte kaydı sıfırla."""
+    def basarili_kaydet(self, key: str) -> None:
+        """Reset records on successful login."""
         with self._lock:
-            self._kayitlar[anahtar] = []
-            self._kilitler.pop(anahtar, None)
+            self._records[key] = []
+            self._locks.pop(key, None)
 
 
-# Global limiter instance — login endpoint'i için
+# Global limiter instance — for the login endpoint
 login_limiter = RateLimiter()

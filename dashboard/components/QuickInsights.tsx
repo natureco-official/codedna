@@ -1,8 +1,9 @@
 "use client";
 
 /**
- * Ana sayfadaki hızlı özet widget'ı.
- * Bus factor kritik sayısı + aylık borç tahmini, tıklanınca ilgili sayfaya yönlendirir.
+ * Quick summary widget on the main page.
+ * Shows critical bus factor count + monthly debt estimate,
+ * clicking navigates to the relevant page.
  */
 
 import { useState, useEffect } from "react";
@@ -12,22 +13,22 @@ import { getCurrentPlan } from "@/lib/plan";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
-interface InsightVeri {
-  kritikDosya: number | null;
-  aylikBorc: number | null;
-  dolarGizli: boolean;
-  toplamBorc: number | null;
+interface InsightData {
+  criticalFiles: number | null;
+  monthlyDebt: number | null;
+  dollarsHidden: boolean;
+  totalDebt: number | null;
 }
 
 export function QuickInsights() {
   const { t } = useTranslation();
-  const [veri, setVeri] = useState<InsightVeri | null>(null);
+  const [data, setData] = useState<InsightData | null>(null);
   const [plan, setPlan] = useState("free");
 
   useEffect(() => {
     setPlan(getCurrentPlan());
 
-    // Bus factor ve borç verilerini paralel çek — hata sessizce görmezden gel
+    // Fetch bus factor and debt data in parallel — silently ignore errors
     Promise.allSettled([
       fetch(`${API_URL}/bus-factor/critical`).then((r) =>
         r.ok ? r.json() : Promise.reject()
@@ -35,36 +36,36 @@ export function QuickInsights() {
       fetch(`${API_URL}/debt/summary?rate=75`).then((r) =>
         r.ok ? r.json() : Promise.reject()
       ),
-    ]).then(([bfSonuc, debtSonuc]) => {
-      const kritik =
-        bfSonuc.status === "fulfilled" ? bfSonuc.value.kritik_sayisi ?? null : null;
-      const aylik =
-        debtSonuc.status === "fulfilled"
-          ? debtSonuc.value.toplam_aylik_maliyet_usd ?? null
+    ]).then(([bfResult, debtResult]) => {
+      const critical =
+        bfResult.status === "fulfilled" ? bfResult.value.critical_count ?? null : null;
+      const monthly =
+        debtResult.status === "fulfilled"
+          ? debtResult.value.total_monthly_cost_usd ?? null
           : null;
-      const toplam =
-        debtSonuc.status === "fulfilled"
-          ? debtSonuc.value.toplam_debt_saatleri ?? null
+      const total =
+        debtResult.status === "fulfilled"
+          ? debtResult.value.total_debt_hours ?? null
           : null;
-      const gizli =
-        debtSonuc.status === "fulfilled"
-          ? debtSonuc.value.dolar_gizli ?? true
+      const hidden =
+        debtResult.status === "fulfilled"
+          ? debtResult.value.dollars_hidden ?? true
           : true;
 
-      setVeri({ kritikDosya: kritik, aylikBorc: aylik, dolarGizli: gizli, toplamBorc: toplam });
+      setData({ criticalFiles: critical, monthlyDebt: monthly, dollarsHidden: hidden, totalDebt: total });
     });
   }, []);
 
-  // Her iki API da cevap vermediyse widget'ı gösterme
-  if (!veri) return null;
+  // Don't show widget until both APIs respond
+  if (!data) return null;
 
-  const hicVeri = veri.kritikDosya === null && veri.toplamBorc === null;
-  if (hicVeri) return null;
+  const noData = data.criticalFiles === null && data.totalDebt === null;
+  if (noData) return null;
 
   return (
     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-      {/* Bus Factor kartı */}
-      {veri.kritikDosya !== null && (
+      {/* Bus Factor card */}
+      {data.criticalFiles !== null && (
         <Link
           href="/bus-factor"
           className="group bg-gray-900 border border-red-900/30 hover:border-red-500/40 rounded-xl p-4 flex items-center gap-4 transition-all"
@@ -75,7 +76,7 @@ export function QuickInsights() {
               {t("bus_factor_critical_count")}
             </p>
             <p className="text-xl font-bold text-red-400 mt-0.5">
-              {veri.kritikDosya}{" "}
+              {data.criticalFiles}{" "}
               <span className="text-sm font-normal text-gray-500">
                 {t("bus_factor_critical").toLowerCase()}
               </span>
@@ -85,8 +86,8 @@ export function QuickInsights() {
         </Link>
       )}
 
-      {/* Teknik Borç kartı */}
-      {veri.toplamBorc !== null && (
+      {/* Technical Debt card */}
+      {data.totalDebt !== null && (
         <Link
           href="/debt"
           className="group bg-gray-900 border border-amber-900/30 hover:border-amber-500/40 rounded-xl p-4 flex items-center gap-4 transition-all"
@@ -97,13 +98,13 @@ export function QuickInsights() {
               {t("debt_title")}
             </p>
             <p className="text-xl font-bold text-amber-400 mt-0.5">
-              {veri.toplamBorc.toFixed(1)}h
-              {!veri.dolarGizli && veri.aylikBorc != null && (
+              {data.totalDebt.toFixed(1)}h
+              {!data.dollarsHidden && data.monthlyDebt != null && (
                 <span className="text-sm font-normal text-gray-500 ml-2">
-                  ${veri.aylikBorc.toFixed(0)}/mo
+                  ${data.monthlyDebt.toFixed(0)}/mo
                 </span>
               )}
-              {veri.dolarGizli && (
+              {data.dollarsHidden && (
                 <span className="text-xs font-normal text-gray-600 ml-2">
                   🔒 Pro+
                 </span>

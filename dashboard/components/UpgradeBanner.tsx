@@ -4,11 +4,11 @@ import Link from "next/link";
 import { Plan } from "@/lib/plan";
 import { useTranslation } from "@/lib/i18n";
 
-/** Ücretsiz plan kullanıcıları için navbar altındaki ince upgrade banner */
+/** Thin upgrade banner under navbar for free plan users */
 export function UpgradeBanner({ plan }: { plan: Plan }) {
   const { t } = useTranslation();
 
-  // Pro ve üstü kullanıcılara gösterme
+  // Don't show to Pro and above users
   if (plan !== "free") return null;
 
   return (

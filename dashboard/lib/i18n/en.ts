@@ -1,4 +1,4 @@
-/** İngilizce çeviri anahtarları */
+/** English translation keys */
 export const en = {
   app_tagline: "AI Code Transparency Tool",
   loading: "Loading...",
@@ -91,6 +91,7 @@ export const en = {
   pricing_most_popular: "Most Popular",
   pricing_per_month: "/mo",
   pricing_get_started: "Get Started",
+  pricing_get_started_paid: "Upgrade Now",
   pricing_contact_sales: "Contact Sales",
   pricing_current_plan: "Current Plan",
   pricing_feature_repos: "Repositories",
@@ -135,7 +136,7 @@ export const en = {
   bus_factor_filter_all: "All",
   bus_factor_filter_critical: "Critical Only",
 
-  // Teknik Borç
+  // Technical Debt
   debt_title: "Technical Debt",
   debt_subtitle: "Estimated cost of poor code understanding",
   debt_total_hours: "Total Debt Hours",
@@ -151,7 +152,7 @@ export const en = {
   debt_free_hint: "Upgrade to Pro to see dollar amounts.",
   debt_rate_label: "Hourly rate ($/h)",
 
-  // Sprint Sağlık
+  // Sprint Health
   sprint_title: "Sprint Health",
   sprint_subtitle: "Code quality score per sprint",
   sprint_health_score: "Health Score",
@@ -173,7 +174,7 @@ export const en = {
   sprint_save_success: "Sprint saved.",
   sprint_locked: "Sprint Health requires Team plan.",
 
-  // Jira Entegrasyonu
+  // Jira Integration
   integration_jira_title: "Jira Integration",
   integration_jira_subtitle: "Receive sprint events via webhook",
   integration_webhook_url: "Webhook URL",
@@ -187,11 +188,11 @@ export const en = {
   integration_locked: "Jira integration requires Team plan.",
   integration_signature_required: "Make sure to enable signature verification on the Jira/Linear side — otherwise requests will be rejected.",
 
-  // Maliyet şeffaflığı
+  // Cost transparency
   debt_disclaimer: "This is an estimation model based on understanding score, AI probability, and code complexity — not exact accounting data.",
   debt_formula_summary: "Formula factors: understanding (40%), AI probability (35%), complexity (25%)",
 
-  // AI Karşılaştırma
+  // AI Comparison
   ai_compare_title: "AI Tool Comparison",
   ai_compare_subtitle: "Pattern-based estimation of which AI assistant wrote each file",
   ai_compare_disclaimer: "This detection is pattern-based estimation — not definitive. Results may contain false positives.",
@@ -223,7 +224,7 @@ export const en = {
   onboarding_no_authors: "No authors found in database.",
   onboarding_chart_threshold: "Productivity threshold (3.5)",
 
-  // Kod Koruma
+  // Code Protection
   protect_title: "Protected Modules",
   protect_subtitle: "Set minimum understanding thresholds for critical files",
   protect_add: "Add Protected Module",
@@ -238,7 +239,7 @@ export const en = {
   protect_violations_title: "Active Violations",
   protect_all_safe: "All protected modules are safe.",
 
-  // Mülakat
+  // Interview
   interview_title: "Interview Tool",
   interview_subtitle: "Assess how quickly candidates understand your codebase",
   interview_disclaimer: "This tool should not be used as the sole hiring decision factor — it is a complementary signal only.",

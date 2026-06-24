@@ -1,1 +1,1 @@
-"""CodeDNA dış servis entegrasyonları."""
+"""CodeDNA external service integrations."""

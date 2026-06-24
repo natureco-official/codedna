@@ -4,7 +4,7 @@ import { useTranslation } from "@/lib/i18n";
 
 type Section = "page" | "commits" | "chart" | "chart_sub";
 
-/** Ana sayfadaki çevrilebilir başlık/alt başlık bileşeni */
+/** Translatable title/subtitle component for the main page */
 export function OverviewTitles({ section }: { section: Section }) {
   const { t } = useTranslation();
 

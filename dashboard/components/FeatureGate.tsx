@@ -5,25 +5,25 @@ import { Plan, PlanLimits, isFeatureAvailable, minimumPlanFor } from "@/lib/plan
 import { useTranslation } from "@/lib/i18n";
 
 interface FeatureGateProps {
-  /** Kontrol edilecek özellik anahtarı */
+  /** Feature key to check */
   feature: keyof PlanLimits;
-  /** Kullanıcının mevcut planı */
+  /** User's current plan */
   plan: Plan;
-  /** Özellik kullanılabilirse gösterilecek içerik */
+  /** Content shown when the feature is available */
   children: React.ReactNode;
 }
 
 /**
- * Özellik erişim kapısı.
+ * Feature access gate.
  *
- * Kullanımı:
+ * Usage:
  * ```tsx
  * <FeatureGate feature="bus_factor" plan={currentPlan}>
  *   <BusFactorWidget />
  * </FeatureGate>
  * ```
  *
- * Kilitli özelliklerde: 🔒 "Bu özellik X planında mevcut" + "Planı Yükselt" butonu
+ * For locked features: 🔒 "Available on X plan" + "Upgrade" button
  */
 export function FeatureGate({ feature, plan, children }: FeatureGateProps) {
   const { t } = useTranslation();
@@ -32,22 +32,21 @@ export function FeatureGate({ feature, plan, children }: FeatureGateProps) {
     return <>{children}</>;
   }
 
-  // Hangi plan gerekiyor?
-  const gerekliPlan = minimumPlanFor(feature);
-  const planAdi =
-    gerekliPlan === "pro"
+  const requiredPlan = minimumPlanFor(feature);
+  const planName =
+    requiredPlan === "pro"
       ? t("plan_pro")
-      : gerekliPlan === "team"
+      : requiredPlan === "team"
       ? t("plan_team")
       : t("plan_enterprise");
 
-  // "{plan}" placeholder'ını gerçek plan adıyla değiştir
-  const mesaj = t("feature_gate_locked").replace("{plan}", planAdi);
+  // Replace "{plan}" placeholder with actual plan name
+  const message = t("feature_gate_locked").replace("{plan}", planName);
 
   return (
     <div className="flex flex-col items-center justify-center gap-3 p-8 bg-gray-900/50 border border-gray-800 border-dashed rounded-xl text-center">
       <span className="text-3xl">🔒</span>
-      <p className="text-gray-400 text-sm">{mesaj}</p>
+      <p className="text-gray-400 text-sm">{message}</p>
       <Link
         href="/pricing"
         className="inline-block bg-cyan-500 hover:bg-cyan-400 text-gray-950 font-semibold text-sm px-4 py-2 rounded-lg transition-colors"

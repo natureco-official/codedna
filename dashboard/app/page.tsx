@@ -1,59 +1,59 @@
 /**
- * Ana pano sayfası — /repo/summary ve /commits endpoint'lerinden veri alır.
+ * Main dashboard page — fetches data from /repo/summary and /commits endpoints.
  */
 
-import { getRepoSummary, getCommitler, getRepoDosyalar } from "@/lib/api";
+import { getRepoSummary, getCommits, getRepoFiles } from "@/lib/api";
 import { SummaryCards, SummaryCardsSkeleton } from "@/components/SummaryCards";
 import { CommitTable, CommitTableSkeleton } from "@/components/CommitTable";
-import { AnlamaGrafigi } from "@/components/AnlamaGrafigi";
-import { HataBanner } from "@/components/HataBanner";
+import { UnderstandingChart } from "@/components/UnderstandingChart";
+import { ErrorBanner } from "@/components/ErrorBanner";
 import { OverviewTitles } from "@/components/OverviewTitles";
 import { QuickInsights } from "@/components/QuickInsights";
 import { Suspense } from "react";
 
-async function OzetKartlarVeri() {
+async function SummaryCardsData() {
   try {
-    const [ozet, dosyalar] = await Promise.all([
+    const [summary, files] = await Promise.all([
       getRepoSummary(),
-      getRepoDosyalar(),
+      getRepoFiles(),
     ]);
-    return <SummaryCards ozet={ozet} toplamDosya={dosyalar.toplam_dosya} />;
+    return <SummaryCards summary={summary} totalFiles={files.total_files} />;
   } catch {
-    return <HataBanner />;
+    return <ErrorBanner />;
   }
 }
 
-async function CommitBolumu() {
+async function CommitsSection() {
   try {
-    const { commitler } = await getCommitler(10);
+    const { commits } = await getCommits(10);
     return (
       <div className="grid grid-cols-1 xl:grid-cols-5 gap-6">
         <div className="xl:col-span-3 bg-gray-900 border border-gray-800 rounded-xl p-6">
           <OverviewTitles section="commits" />
-          <CommitTable commitler={commitler} />
+          <CommitTable commits={commits} />
         </div>
         <div className="xl:col-span-2 bg-gray-900 border border-gray-800 rounded-xl p-6">
           <OverviewTitles section="chart" />
-          <AnlamaGrafigi commitler={commitler} />
+          <UnderstandingChart commits={commits} />
           <OverviewTitles section="chart_sub" />
         </div>
       </div>
     );
   } catch {
-    return <HataBanner />;
+    return <ErrorBanner />;
   }
 }
 
-export default function AnaSayfa() {
+export default function HomePage() {
   return (
     <div className="space-y-8">
       <OverviewTitles section="page" />
 
       <Suspense fallback={<SummaryCardsSkeleton />}>
-        <OzetKartlarVeri />
+        <SummaryCardsData />
       </Suspense>
 
-      {/* Hızlı içgörü widget'ı — Bus Factor + Teknik Borç özeti */}
+      {/* Quick insights widget — Bus Factor + Technical Debt summary */}
       <QuickInsights />
 
       <Suspense
@@ -68,7 +68,7 @@ export default function AnaSayfa() {
           </div>
         }
       >
-        <CommitBolumu />
+        <CommitsSection />
       </Suspense>
     </div>
   );

@@ -1,4 +1,4 @@
-"""Bus factor hesaplama — bir dosyayı kaç kişi gerçekten anlıyor."""
+"""Bus factor calculation — how many people truly understand each file."""
 
 from __future__ import annotations
 
@@ -10,69 +10,69 @@ from typing import Optional
 
 from codedna.db import get_file_ownership, upsert_file_ownership
 
-# Büyük repo uyarı eşiği
-_BUYUK_REPO_ESIGI = 500
+# Large-repo warning threshold
+_LARGE_REPO_THRESHOLD = 500
 
-# Yeterli anlayış eşiği (bu skorun altındaki yazarlar "anlıyor" sayılmaz)
-_ANLAMA_ESIGI = 3.5
+# Sufficient understanding threshold (authors below this are not counted as "knowledgeable")
+_UNDERSTANDING_THRESHOLD = 3.5
 
-# Birincil sahip sayılmak için gereken minimum satır yüzdesi
-_SAHIPLIK_ESIGI = 0.10  # %10 → o dosyada "ilgili" sayılır
+# Minimum line ownership percentage to be counted as a primary owner
+_OWNERSHIP_THRESHOLD = 0.10  # 10% → considered "involved" in the file
 
 
 @dataclass
-class DosyaSahiplik:
-    """Tek bir dosyanın yazar bazlı sahiplik özeti."""
+class FileOwnership:
+    """Author-based ownership summary for a single file."""
 
-    dosya_yolu: str
-    toplam_satir: int
-    yazarlar: dict[str, int] = field(default_factory=dict)  # yazar → satır sayısı
+    file_path: str       # kept for API compatibility (was: dosya_yolu)
+    total_lines: int     # kept for API compatibility (was: toplam_satir)
+    authors: dict[str, int] = field(default_factory=dict)  # author → line count
 
     @property
-    def birincil_sahip(self) -> Optional[str]:
-        """En fazla satıra sahip yazarı döndür."""
-        if not self.yazarlar:
+    def primary_owner(self) -> Optional[str]:
+        """Return the author with the most lines."""
+        if not self.authors:
             return None
-        return max(self.yazarlar, key=lambda y: self.yazarlar[y])
+        return max(self.authors, key=lambda a: self.authors[a])
 
     @property
-    def birincil_sahiplik_yuzdesi(self) -> float:
-        """Birincil sahibin sahiplik yüzdesi (0.0–1.0)."""
-        if not self.yazarlar or self.toplam_satir == 0:
+    def primary_ownership_percentage(self) -> float:
+        """Primary owner's ownership percentage (0.0–1.0)."""
+        if not self.authors or self.total_lines == 0:
             return 0.0
-        birincil = self.birincil_sahip
-        return self.yazarlar.get(birincil or "", 0) / self.toplam_satir
+        primary = self.primary_owner
+        return self.authors.get(primary or "", 0) / self.total_lines
 
 
 @dataclass
-class BusFaktorSonucu:
-    """Tek dosya için bus factor sonucu."""
+class BusFactorResult:
+    """Bus factor result for a single file."""
 
-    dosya_yolu: str
-    bus_factor: int                  # kaç kişi bu dosyayı anlıyor
-    birincil_sahip: Optional[str]
-    sahiplik_yuzdesi: float          # birincil sahibin yüzdesi
-    risk: str                        # KRİTİK / RİSKLİ / GÜVENLİ
-    anlayan_yazarlar: list[str]      # anlama skoru >= eşik olan yazarlar
-    toplam_satir: int
+    file_path: str           # kept for API compatibility (was: dosya_yolu)
+    bus_factor: int           # how many people understand this file
+    primary_owner: Optional[str]
+    ownership_percentage: float   # primary owner's percentage (was: sahiplik_yuzdesi)
+    risk: str                 # CRITICAL / RISKY / SAFE
+    knowledgeable_authors: list[str]   # authors with understanding_score >= threshold (was: anlayan_yazarlar)
+    total_lines: int
 
 
-def _git_blame_calistir(dosya_yolu: Path, repo_koku: Path) -> dict[str, int]:
+def _run_git_blame(file_path: Path, repo_root: Path) -> dict[str, int]:
     """
-    git blame --line-porcelain ile satır bazlı yazar tespiti yap.
+    Perform per-line author detection using git blame --line-porcelain.
 
     Returns:
-        {yazar_adi: satir_sayisi} sözlüğü
+        {author_name: line_count} dict
     """
     try:
-        goreceli = dosya_yolu.relative_to(repo_koku)
+        relative = file_path.relative_to(repo_root)
     except ValueError:
-        goreceli = dosya_yolu
+        relative = file_path
 
     try:
-        sonuc = subprocess.run(
-            ["git", "blame", "--line-porcelain", str(goreceli)],
-            cwd=str(repo_koku),
+        result = subprocess.run(
+            ["git", "blame", "--line-porcelain", str(relative)],
+            cwd=str(repo_root),
             capture_output=True,
             text=True,
             timeout=30,
@@ -82,80 +82,80 @@ def _git_blame_calistir(dosya_yolu: Path, repo_koku: Path) -> dict[str, int]:
     except (subprocess.TimeoutExpired, FileNotFoundError):
         return {}
 
-    if sonuc.returncode != 0:
+    if result.returncode != 0:
         return {}
 
-    # Çıktıdan "author " satırlarını topla
-    yazar_satirlari: dict[str, int] = defaultdict(int)
-    for satir in sonuc.stdout.splitlines():
-        if satir.startswith("author "):
-            yazar = satir[7:].strip()
-            # Özel "Not Committed Yet" durumunu atla
-            if yazar and yazar != "Not Committed Yet":
-                yazar_satirlari[yazar] += 1
+    # Collect "author " lines from output
+    author_lines: dict[str, int] = defaultdict(int)
+    for line in result.stdout.splitlines():
+        if line.startswith("author "):
+            author = line[7:].strip()
+            # Skip the special "Not Committed Yet" entry
+            if author and author != "Not Committed Yet":
+                author_lines[author] += 1
 
-    return dict(yazar_satirlari)
+    return dict(author_lines)
 
 
-def _dosya_listesi_al(repo_koku: Path, max_dosya: int = _BUYUK_REPO_ESIGI) -> list[Path]:
+def _list_tracked_files(repo_root: Path, max_files: int = _LARGE_REPO_THRESHOLD) -> list[Path]:
     """
-    Git tarafından izlenen desteklenen kaynak dosyaları listele.
+    List supported source files tracked by Git.
 
     Args:
-        repo_koku: Git repo kök dizini
-        max_dosya: İşlenecek maksimum dosya sayısı (performans için)
+        repo_root: Git repo root directory
+        max_files: Maximum number of files to process (for performance)
 
     Returns:
-        Mutlak Path listesi
+        List of absolute Paths
     """
-    desteklenen = {".py", ".js", ".jsx", ".ts", ".tsx"}
+    supported = {".py", ".js", ".jsx", ".ts", ".tsx"}
 
     try:
-        sonuc = subprocess.run(
+        result = subprocess.run(
             ["git", "ls-files"],
-            cwd=str(repo_koku),
+            cwd=str(repo_root),
             capture_output=True,
             text=True,
             timeout=10,
             encoding="utf-8",
             errors="replace",
         )
-        dosyalar = sonuc.stdout.strip().splitlines()
+        files = result.stdout.strip().splitlines()
     except Exception:
-        dosyalar = []
+        files = []
 
-    filtreli = [
-        repo_koku / d for d in dosyalar
-        if Path(d).suffix.lower() in desteklenen and (repo_koku / d).exists()
+    filtered = [
+        repo_root / f for f in files
+        if Path(f).suffix.lower() in supported and (repo_root / f).exists()
     ]
-    return filtreli[:max_dosya]
+    return filtered[:max_files]
 
 
 def calculate_bus_factor(
     repo_path: Path,
     db_path: Path,
-    max_dosya: int = _BUYUK_REPO_ESIGI,
-) -> list[BusFaktorSonucu]:
+    max_files: int = _LARGE_REPO_THRESHOLD,
+) -> list[BusFactorResult]:
     """
-    Repo genelinde her dosya için bus factor hesapla ve DB'ye kaydet.
+    Calculate the bus factor for every file in the repo and save to DB.
 
-    Bus factor = o dosyanın %50'sinden fazlasına sahip OLAN
-    VE understanding_score >= 3.5 olan yazar sayısı.
-    Anlama skoru yoksa sahiplik oranı >= 10% yeterli sayılır.
+    Bus factor = number of authors who own >50% of the file
+    AND have understanding_score >= 3.5.
+    When no understanding score is available, ownership >= 10% is sufficient.
 
     Args:
-        repo_path: Git repo kök dizini
-        max_dosya: İşlenecek maksimum dosya sayısı
+        repo_path: Git repo root directory
+        max_files: Maximum number of files to process
 
     Returns:
-        BusFaktorSonucu listesi, bus_factor'a göre artan sırada
+        List of BusFactorResult sorted by bus_factor ascending
     """
-    kok = Path(repo_path).resolve()
-    dosyalar = _dosya_listesi_al(kok, max_dosya)
+    root = Path(repo_path).resolve()
+    files = _list_tracked_files(root, max_files)
 
-    # Mevcut anlama skorlarını DB'den tek sorguda çek
+    # Fetch current understanding scores from DB in a single query
     from codedna.db import get_connection
-    anlama_map: dict[tuple[str, str], float] = {}  # (dosya_yolu, yazar) → skor
+    understanding_map: dict[tuple[str, str], float] = {}  # (file_path, author) → score
     try:
         with get_connection(db_path) as conn:
             rows = conn.execute(
@@ -166,94 +166,93 @@ def calculate_bus_factor(
                 """
             ).fetchall()
             for r in rows:
-                anlama_map[(r["file_path"], r["author"])] = float(r["avg_understanding"])
+                understanding_map[(r["file_path"], r["author"])] = float(r["avg_understanding"])
     except Exception:
         pass
 
-    sonuclar: list[BusFaktorSonucu] = []
+    results: list[BusFactorResult] = []
 
-    for dosya in dosyalar:
-        yazar_satirlari = _git_blame_calistir(dosya, kok)
-        if not yazar_satirlari:
+    for file in files:
+        author_lines = _run_git_blame(file, root)
+        if not author_lines:
             continue
 
-        toplam = sum(yazar_satirlari.values())
-        if toplam == 0:
+        total = sum(author_lines.values())
+        if total == 0:
             continue
 
-        # DB'ye kaydet
-        for yazar, satir in yazar_satirlari.items():
-            anlama = anlama_map.get((str(dosya), yazar))
+        # Save to DB
+        for author, lines in author_lines.items():
+            understanding = understanding_map.get((str(file), author))
             upsert_file_ownership(
-                file_path=str(dosya),
-                author=yazar,
-                lines_owned=satir,
-                last_touched=0,     # gelecekte git log ile doldurulacak
-                avg_understanding=anlama,
+                file_path=str(file),
+                author=author,
+                lines_owned=lines,
+                last_touched=0,
+                avg_understanding=understanding,
                 db_path=db_path,
             )
 
-        # "Anlayan" yazarları belirle
-        anlayan: list[str] = []
-        for yazar, satir in yazar_satirlari.items():
-            yuzde = satir / toplam
-            # Anlama skoru varsa kontrol et, yoksa %10+ sahiplik yeterli
-            anlama_skoru = anlama_map.get((str(dosya), yazar))
-            if anlama_skoru is not None:
-                if anlama_skoru >= _ANLAMA_ESIGI and yuzde >= _SAHIPLIK_ESIGI:
-                    anlayan.append(yazar)
-            elif yuzde >= _SAHIPLIK_ESIGI:
-                # Anket verisi yoksa sahipliği baz al
-                anlayan.append(yazar)
+        # Identify "knowledgeable" authors
+        knowledgeable: list[str] = []
+        for author, lines in author_lines.items():
+            pct = lines / total
+            score = understanding_map.get((str(file), author))
+            if score is not None:
+                if score >= _UNDERSTANDING_THRESHOLD and pct >= _OWNERSHIP_THRESHOLD:
+                    knowledgeable.append(author)
+            elif pct >= _OWNERSHIP_THRESHOLD:
+                # No survey data — fall back to ownership percentage
+                knowledgeable.append(author)
 
-        bus_factor = max(len(anlayan), 1)
+        bus_factor = max(len(knowledgeable), 1)
         if bus_factor == 1:
-            risk = "KRİTİK"
+            risk = "CRITICAL"
         elif bus_factor == 2:
-            risk = "RİSKLİ"
+            risk = "RISKY"
         else:
-            risk = "GÜVENLİ"
+            risk = "SAFE"
 
-        # Birincil sahip
-        birincil = max(yazar_satirlari, key=lambda y: yazar_satirlari[y])
-        birincil_yuzde = yazar_satirlari[birincil] / toplam
+        # Primary owner
+        primary = max(author_lines, key=lambda a: author_lines[a])
+        primary_pct = author_lines[primary] / total
 
-        # Göreli dosya yolu
+        # Relative file path
         try:
-            goreceli_yol = str(dosya.relative_to(kok))
+            relative_path = str(file.relative_to(root))
         except ValueError:
-            goreceli_yol = str(dosya)
+            relative_path = str(file)
 
-        sonuclar.append(
-            BusFaktorSonucu(
-                dosya_yolu=goreceli_yol,
+        results.append(
+            BusFactorResult(
+                file_path=relative_path,
                 bus_factor=bus_factor,
-                birincil_sahip=birincil,
-                sahiplik_yuzdesi=round(birincil_yuzde * 100, 1),
+                primary_owner=primary,
+                ownership_percentage=round(primary_pct * 100, 1),
                 risk=risk,
-                anlayan_yazarlar=anlayan,
-                toplam_satir=toplam,
+                knowledgeable_authors=knowledgeable,
+                total_lines=total,
             )
         )
 
-    # Bus factor'a göre artan sıralama (KRİTİK önce)
-    sonuclar.sort(key=lambda s: s.bus_factor)
-    return sonuclar
+    # Sort ascending by bus_factor (CRITICAL first)
+    results.sort(key=lambda s: s.bus_factor)
+    return results
 
 
 def get_at_risk_files(
     repo_path: Path,
     db_path: Path,
-) -> list[BusFaktorSonucu]:
+) -> list[BusFactorResult]:
     """
-    bus_factor == 1 olan dosyaları döndür (KRİTİK liste).
+    Return files where bus_factor == 1 (CRITICAL list).
 
     Args:
-        repo_path: Git repo kök dizini
-        db_path: SQLite veritabanı yolu
+        repo_path: Git repo root directory
+        db_path: SQLite database path
 
     Returns:
-        Kritik dosyaların BusFaktorSonucu listesi
+        List of BusFactorResult for critical files
     """
-    tum = calculate_bus_factor(repo_path, db_path)
-    return [s for s in tum if s.bus_factor == 1]
+    all_results = calculate_bus_factor(repo_path, db_path)
+    return [s for s in all_results if s.bus_factor == 1]

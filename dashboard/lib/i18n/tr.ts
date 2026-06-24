@@ -93,6 +93,7 @@ export const tr: Record<TranslationKey, string> = {
   pricing_most_popular: "En Popüler",
   pricing_per_month: "/ay",
   pricing_get_started: "Başla",
+  pricing_get_started_paid: "Hemen Yükselt",
   pricing_contact_sales: "Satışla İletişim",
   pricing_current_plan: "Mevcut Plan",
   pricing_feature_repos: "Repo sayısı",

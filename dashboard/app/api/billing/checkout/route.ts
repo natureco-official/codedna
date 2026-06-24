@@ -1,47 +1,49 @@
 /**
- * Next.js API Route — /api/billing/checkout
- * Cookie'deki token'ı alıp FastAPI'ye checkout isteği proxy'ler.
+ * Next.js API Route — Billing Checkout
+ * Forwards the JWT token from cookie to FastAPI.
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { cookies } from "next/headers";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 export async function POST(req: NextRequest) {
-  const cookieStore = cookies();
-  const token = cookieStore.get("codedna_token")?.value;
+  const body = await req.json().catch(() => null);
+  if (!body?.plan) {
+    return NextResponse.json({ detail: "Plan is required." }, { status: 422 });
+  }
 
+  // Get token from cookie
+  const token = req.cookies.get("codedna_token")?.value;
   if (!token) {
-    return NextResponse.json({ detail: "Giriş yapınız." }, { status: 401 });
+    return NextResponse.json({ detail: "Token required." }, { status: 401 });
   }
 
-  const govde = await req.json().catch(() => null);
-  if (!govde?.plan) {
-    return NextResponse.json({ detail: "Plan zorunlu." }, { status: 422 });
-  }
-
+  // Forward to FastAPI
   try {
-    const fastapiYanit = await fetch(`${API_URL}/billing/checkout`, {
+    const response = await fetch(`${API_URL}/billing/checkout`, {
       method: "POST",
       headers: {
+        "Authorization": `Bearer ${token}`,
         "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
       },
-      body: JSON.stringify({ plan: govde.plan }),
+      body: JSON.stringify({ plan: body.plan }),
     });
 
-    const veri = await fastapiYanit.json();
+    const data = await response.json();
 
-    if (!fastapiYanit.ok) {
+    if (!response.ok) {
       return NextResponse.json(
-        { detail: veri.detail || "Checkout URL alınamadı." },
-        { status: fastapiYanit.status }
+        { detail: data.detail || "Unknown error" },
+        { status: response.status }
       );
     }
 
-    return NextResponse.json(veri);
-  } catch {
-    return NextResponse.json({ detail: "API'ye bağlanılamadı." }, { status: 503 });
+    return NextResponse.json(data);
+  } catch (e) {
+    return NextResponse.json(
+      { detail: "Cannot connect to API." },
+      { status: 503 }
+    );
   }
 }

@@ -1,4 +1,4 @@
-"""AST analizi ve AI imza tespiti modülü."""
+"""AST analysis and AI signature detection module."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ import tree_sitter_python as tspython
 import tree_sitter_javascript as tsjavascript
 from tree_sitter import Language, Parser, Node
 
-# TypeScript parser — kurulu değilse JS parser'a geri dön
+# TypeScript parser — fall back to JS parser if not installed
 try:
     import tree_sitter_typescript as tstypescript
     _TS_LANG = tstypescript.language_typescript()
@@ -22,7 +22,7 @@ except Exception:
     _TSX_LANG = tsjavascript.language()
     _TS_AVAILABLE = False
 
-# Desteklenen dil eşlemesi
+# Supported language map
 LANGUAGE_MAP: dict[str, tuple] = {
     ".py":  ("python",     tspython.language()),
     ".js":  ("javascript", tsjavascript.language()),
@@ -34,7 +34,7 @@ LANGUAGE_MAP: dict[str, tuple] = {
 
 @dataclass
 class FileAnalysisResult:
-    """Tek bir dosyanın analiz sonucu."""
+    """Analysis result for a single file."""
 
     file_path: str
     ai_probability: float = 0.0
@@ -44,22 +44,22 @@ class FileAnalysisResult:
     single_commit_ratio: float = 0.0
     total_lines: int = 0
     function_count: int = 0
-    desteklenmiyor: bool = False
-    hata: Optional[str] = None
+    unsupported: bool = False   # kept for internal use
+    error: Optional[str] = None     # kept for internal use
 
     @property
     def complexity_label(self) -> str:
-        """Karmaşıklık seviyesini metin olarak döndür."""
+        """Return complexity level as a string."""
         if self.complexity_score < 5:
-            return "Düşük"
+            return "Low"
         elif self.complexity_score < 15:
-            return "Orta"
+            return "Medium"
         else:
-            return "Yüksek"
+            return "High"
 
     @property
     def ai_color(self) -> str:
-        """AI olasılığına göre renk emojisi döndür."""
+        """Return color emoji based on AI probability."""
         if self.ai_probability >= 0.7:
             return "🔴"
         elif self.ai_probability >= 0.4:
@@ -69,7 +69,7 @@ class FileAnalysisResult:
 
 
 def _build_parser(ext: str) -> Optional[Parser]:
-    """Dosya uzantısına göre tree-sitter parser oluştur."""
+    """Build a tree-sitter parser for the given file extension."""
     if ext not in LANGUAGE_MAP:
         return None
     _, lang_obj = LANGUAGE_MAP[ext]
@@ -79,35 +79,35 @@ def _build_parser(ext: str) -> Optional[Parser]:
 
 
 def _count_lines(source: str) -> tuple[int, int]:
-    """Toplam satır ve yorum satırı sayısını döndür (toplam, yorum)."""
+    """Return (total_lines, comment_lines) count."""
     lines = source.splitlines()
-    toplam = len(lines)
-    yorum = 0
+    total = len(lines)
+    comments = 0
     for line in lines:
         stripped = line.strip()
-        # Python, JS, TS tek satır yorumları
+        # Python, JS, TS single-line comments
         if stripped.startswith("#") or stripped.startswith("//"):
-            yorum += 1
-        # Çok satırlı yorum içinde olup olmadığını basit regex ile yakala
+            comments += 1
+        # Simple heuristic for multi-line comments
         elif stripped.startswith("*") or stripped.startswith("/*") or stripped.startswith('"""') or stripped.startswith("'''"):
-            yorum += 1
-    return toplam, yorum
+            comments += 1
+    return total, comments
 
 
 def _collect_functions(node: Node, functions: list[Node]) -> None:
-    """Ağaç içindeki tüm fonksiyon düğümlerini özyinelemeli topla."""
-    fonksiyon_tipleri = {
-        "function_definition",      # Python
-        "function_declaration",     # JS/TS
-        "method_definition",        # JS/TS class method
-        "method_signature",         # TS interface method
-        "abstract_method_signature",# TS abstract
-        "arrow_function",           # JS/TS arrow
-        "function_expression",      # JS/TS
-        "generator_function",       # JS/TS generator
+    """Recursively collect all function nodes from the AST."""
+    function_types = {
+        "function_definition",          # Python
+        "function_declaration",         # JS/TS
+        "method_definition",            # JS/TS class method
+        "method_signature",             # TS interface method
+        "abstract_method_signature",    # TS abstract
+        "arrow_function",               # JS/TS arrow
+        "function_expression",          # JS/TS
+        "generator_function",           # JS/TS generator
         "generator_function_declaration",
     }
-    if node.type in fonksiyon_tipleri:
+    if node.type in function_types:
         functions.append(node)
     for child in node.children:
         _collect_functions(child, functions)
@@ -115,33 +115,33 @@ def _collect_functions(node: Node, functions: list[Node]) -> None:
 
 def _calculate_cyclomatic_complexity(node: Node) -> float:
     """
-    Basit cyclomatic complexity hesapla.
-    Karar noktalarını (if, for, while, case, &&, ||) say.
+    Calculate simple cyclomatic complexity.
+    Count decision points (if, for, while, case, &&, ||).
     """
-    karar_tipleri = {
+    decision_types = {
         "if_statement", "elif_clause", "for_statement", "while_statement",
         "with_statement", "try_statement", "except_clause",
-        "if_expression",  # Python ternary
+        "if_expression",   # Python ternary
         "switch_case", "case_clause",
         # JS/TS
         "if", "for", "while", "switch", "catch",
         "ternary_expression",
         "&&", "||", "??",
     }
-    sayac = 1  # Temel yol
+    count = 1  # Base path
 
-    def _gez(n: Node) -> None:
-        nonlocal sayac
-        if n.type in karar_tipleri:
-            sayac += 1
-        # Mantıksal operatörler
+    def _traverse(n: Node) -> None:
+        nonlocal count
+        if n.type in decision_types:
+            count += 1
+        # Logical operators
         if n.type in {"boolean_operator", "logical_expression"}:
-            sayac += 1
+            count += 1
         for child in n.children:
-            _gez(child)
+            _traverse(child)
 
-    _gez(node)
-    return float(sayac)
+    _traverse(node)
+    return float(count)
 
 
 def analyze_file(
@@ -149,97 +149,97 @@ def analyze_file(
     single_commit_ratio: float = 0.0,
 ) -> FileAnalysisResult:
     """
-    Dosyayı AST ile analiz et ve AI imza metriklerini hesapla.
+    Analyze a file with AST and calculate AI signature metrics.
 
     Args:
-        file_path: Analiz edilecek dosyanın yolu
-        single_commit_ratio: Tek commit'te gelen satır oranı (dışarıdan verilir)
+        file_path: Path to the file to analyze
+        single_commit_ratio: Fraction of lines added in a single commit (provided externally)
 
     Returns:
-        FileAnalysisResult nesnesi
+        FileAnalysisResult object
     """
-    sonuc = FileAnalysisResult(
+    result = FileAnalysisResult(
         file_path=str(file_path),
         single_commit_ratio=single_commit_ratio,
     )
 
-    # Dosya okunabilir mi?
+    # Can we read the file?
     try:
-        kaynak = file_path.read_text(encoding="utf-8", errors="replace")
+        source = file_path.read_text(encoding="utf-8", errors="replace")
     except Exception as e:
-        sonuc.hata = f"Dosya okunamadı: {e}"
-        return sonuc
+        result.error = f"Cannot read file: {e}"
+        return result
 
     ext = file_path.suffix.lower()
     parser = _build_parser(ext)
 
     if parser is None:
-        sonuc.desteklenmiyor = True
-        return sonuc
+        result.unsupported = True
+        return result
 
-    # Satır sayıları
-    toplam_satir, yorum_satir = _count_lines(kaynak)
-    sonuc.total_lines = toplam_satir
-    sonuc.comment_ratio = (yorum_satir / toplam_satir) if toplam_satir > 0 else 0.0
+    # Line counts
+    total_lines, comment_lines = _count_lines(source)
+    result.total_lines = total_lines
+    result.comment_ratio = (comment_lines / total_lines) if total_lines > 0 else 0.0
 
-    # AST parse
+    # Parse AST
     try:
-        tree = parser.parse(bytes(kaynak, "utf8"))
+        tree = parser.parse(bytes(source, "utf8"))
     except Exception as e:
-        sonuc.hata = f"AST parse hatası: {e}"
-        return sonuc
+        result.error = f"AST parse error: {e}"
+        return result
 
-    # Fonksiyon analizi
-    fonksiyonlar: list[Node] = []
-    _collect_functions(tree.root_node, fonksiyonlar)
-    sonuc.function_count = len(fonksiyonlar)
+    # Function analysis
+    functions: list[Node] = []
+    _collect_functions(tree.root_node, functions)
+    result.function_count = len(functions)
 
-    if fonksiyonlar:
-        uzunluklar = [
+    if functions:
+        lengths = [
             f.end_point[0] - f.start_point[0] + 1
-            for f in fonksiyonlar
+            for f in functions
         ]
-        sonuc.avg_function_length = sum(uzunluklar) / len(uzunluklar)
+        result.avg_function_length = sum(lengths) / len(lengths)
     else:
-        # Fonksiyon yoksa toplam satırı tek blok say
-        sonuc.avg_function_length = float(toplam_satir)
+        # No functions — treat entire file as one block
+        result.avg_function_length = float(total_lines)
 
-    # Cyclomatic complexity (tüm dosya üzerinden)
-    sonuc.complexity_score = _calculate_cyclomatic_complexity(tree.root_node)
+    # Cyclomatic complexity (whole file)
+    result.complexity_score = _calculate_cyclomatic_complexity(tree.root_node)
 
-    # AI olasılığı hesapla
-    sonuc.ai_probability = _calculate_ai_probability(sonuc)
+    # Calculate AI probability
+    result.ai_probability = _calculate_ai_probability(result)
 
-    return sonuc
+    return result
 
 
-def _calculate_ai_probability(sonuc: FileAnalysisResult) -> float:
+def _calculate_ai_probability(result: FileAnalysisResult) -> float:
     """
-    Kural tabanlı AI olasılığı skoru hesapla (0.0 – 1.0).
+    Calculate a rule-based AI probability score (0.0 – 1.0).
 
-    Kurallar:
-      - comment_ratio > 0.3       → +0.20
-      - avg_function_length > 50  → +0.15
-      - single_commit_ratio > 0.7 → +0.30
-      - complexity yüksek & tek commit → +0.25
+    Rules:
+      - comment_ratio > 0.3       → +0.20  (AI tends to over-comment)
+      - avg_function_length > 50  → +0.15  (AI tends to produce large blocks)
+      - single_commit_ratio > 0.7 → +0.30  (bulk paste indicator)
+      - high complexity + single commit → +0.25
     """
-    skor = 0.0
+    score = 0.0
 
-    # Kural 1: Aşırı yorum oranı (AI kodu genelde çok yorum yazar)
-    if sonuc.comment_ratio > 0.3:
-        skor += 0.20
+    # Rule 1: Excessive comment ratio (AI code tends to over-comment)
+    if result.comment_ratio > 0.3:
+        score += 0.20
 
-    # Kural 2: Uzun fonksiyonlar (AI genelde büyük bloklar üretir)
-    if sonuc.avg_function_length > 50:
-        skor += 0.15
+    # Rule 2: Long functions (AI tends to produce large blocks)
+    if result.avg_function_length > 50:
+        score += 0.15
 
-    # Kural 3: Tek commit'te büyük değişiklik (toplu yapıştırma işareti)
-    if sonuc.single_commit_ratio > 0.7:
-        skor += 0.30
+    # Rule 3: Large change in a single commit (bulk paste indicator)
+    if result.single_commit_ratio > 0.7:
+        score += 0.30
 
-    # Kural 4: Yüksek karmaşıklık + tek seferlik commit
-    if sonuc.complexity_score > 10 and sonuc.single_commit_ratio > 0.5:
-        skor += 0.25
+    # Rule 4: High complexity + single-commit
+    if result.complexity_score > 10 and result.single_commit_ratio > 0.5:
+        score += 0.25
 
-    # 0.0 – 1.0 arasına normalize et
-    return min(skor, 1.0)
+    # Normalize to 0.0 – 1.0
+    return min(score, 1.0)

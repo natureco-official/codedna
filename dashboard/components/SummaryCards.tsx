@@ -4,60 +4,60 @@ import { RepoSummary } from "@/lib/api";
 import { RiskBadge } from "./RiskBadge";
 import { useTranslation } from "@/lib/i18n";
 
-/** Üst satırdaki 5 özet kart */
+/** Top row summary cards */
 export function SummaryCards({
-  ozet,
-  toplamDosya,
+  summary,
+  totalFiles,
 }: {
-  ozet: RepoSummary;
-  toplamDosya?: number;
+  summary: RepoSummary;
+  totalFiles?: number;
 }) {
   const { t } = useTranslation();
 
-  const kartlar = [
+  const cards = [
     {
-      baslik: t("card_total_files"),
-      deger: toplamDosya != null ? String(toplamDosya) : "—",
-      alt: t("card_total_files_sub"),
-      renk: "text-cyan-400",
+      title: t("card_total_files"),
+      value: totalFiles != null ? String(totalFiles) : "—",
+      sub: t("card_total_files_sub"),
+      color: "text-cyan-400",
     },
     {
-      baslik: t("card_avg_ai"),
-      deger:
-        ozet.ortalama_ai_yuzdesi != null
-          ? `%${ozet.ortalama_ai_yuzdesi.toFixed(0)}`
+      title: t("card_avg_ai"),
+      value:
+        summary.avg_ai_percentage != null
+          ? `${summary.avg_ai_percentage.toFixed(0)}%`
           : "—",
-      alt: t("card_avg_ai_sub"),
-      renk:
-        (ozet.ortalama_ai_yuzdesi ?? 0) >= 70
+      sub: t("card_avg_ai_sub"),
+      color:
+        (summary.avg_ai_percentage ?? 0) >= 70
           ? "text-red-400"
-          : (ozet.ortalama_ai_yuzdesi ?? 0) >= 40
+          : (summary.avg_ai_percentage ?? 0) >= 40
           ? "text-yellow-400"
           : "text-green-400",
     },
     {
-      baslik: t("card_risk"),
-      deger: <RiskBadge risk={ozet.risk_seviyesi} size="lg" />,
-      alt: t("card_risk_sub"),
-      renk: "",
+      title: t("card_risk"),
+      value: <RiskBadge risk={summary.risk_level} size="lg" />,
+      sub: t("card_risk_sub"),
+      color: "",
     },
     {
-      baslik: t("card_total_commits"),
-      deger: ozet.toplam_commit,
-      alt: t("card_total_commits_sub"),
-      renk: "text-cyan-400",
+      title: t("card_total_commits"),
+      value: summary.total_commits,
+      sub: t("card_total_commits_sub"),
+      color: "text-cyan-400",
     },
     {
-      baslik: t("card_avg_understanding"),
-      deger:
-        ozet.ortalama_anlama_skoru != null
-          ? `${ozet.ortalama_anlama_skoru.toFixed(1)}/5`
+      title: t("card_avg_understanding"),
+      value:
+        summary.avg_understanding_score != null
+          ? `${summary.avg_understanding_score.toFixed(1)}/5`
           : "—",
-      alt: `${ozet.anlama_skoru_olan_commit} ${t("commits_surveyed").toLowerCase()}`,
-      renk:
-        (ozet.ortalama_anlama_skoru ?? 0) >= 4
+      sub: `${summary.commits_with_understanding} ${t("commits_surveyed").toLowerCase()}`,
+      color:
+        (summary.avg_understanding_score ?? 0) >= 4
           ? "text-green-400"
-          : (ozet.ortalama_anlama_skoru ?? 0) >= 2.5
+          : (summary.avg_understanding_score ?? 0) >= 2.5
           ? "text-yellow-400"
           : "text-red-400",
     },
@@ -65,23 +65,23 @@ export function SummaryCards({
 
   return (
     <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
-      {kartlar.map((k) => (
+      {cards.map((card) => (
         <div
-          key={k.baslik}
+          key={card.title}
           className="bg-gray-900 border border-gray-800 rounded-xl p-5 flex flex-col gap-1"
         >
           <span className="text-xs text-gray-500 uppercase tracking-wider">
-            {k.baslik}
+            {card.title}
           </span>
-          <span className={`text-2xl font-bold ${k.renk}`}>{k.deger}</span>
-          <span className="text-xs text-gray-600">{k.alt}</span>
+          <span className={`text-2xl font-bold ${card.color}`}>{card.value}</span>
+          <span className="text-xs text-gray-600">{card.sub}</span>
         </div>
       ))}
     </div>
   );
 }
 
-/** Yükleme iskeleti */
+/** Loading skeleton */
 export function SummaryCardsSkeleton() {
   return (
     <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">

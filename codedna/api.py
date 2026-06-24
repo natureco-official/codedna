@@ -1,4 +1,4 @@
-"""CodeDNA FastAPI REST servisi."""
+"""CodeDNA FastAPI REST service."""
 
 from __future__ import annotations
 
@@ -26,45 +26,45 @@ from codedna.scorer import scan_repository
 from codedna.git_hook import find_git_root
 
 # ---------------------------------------------------------------------------
-# Ortam değişkenlerinden yapılandırma
+# Configuration from environment variables
 # ---------------------------------------------------------------------------
 
-def _repo_yolu() -> Path:
-    """Ortam değişkeninden veya otomatik bularak repo yolunu döndür."""
+def _repo_path() -> Path:
+    """Return repo path from environment variable or by auto-detection."""
     env = os.environ.get("CODEDNA_REPO_PATH")
     if env:
         return Path(env).resolve()
     return find_git_root() or Path.cwd()
 
 
-def _db_yolu() -> Path:
-    """Ortam değişkeninden veya repo köküne göre DB yolunu döndür."""
+def _db_path() -> Path:
+    """Return DB path from environment variable or relative to repo root."""
     env = os.environ.get("CODEDNA_DB_PATH")
     if env:
         return Path(env).resolve()
-    return get_db_path(_repo_yolu())
+    return get_db_path(_repo_path())
 
 
 # ---------------------------------------------------------------------------
-# FastAPI uygulaması — lifespan pattern (startup deprecated değil)
+# FastAPI application — lifespan pattern
 # ---------------------------------------------------------------------------
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Uygulama yaşam döngüsü — başlangıçta DB'yi hazırla."""
-    init_db(_db_yolu())
+    """Application lifecycle — initialize DB on startup."""
+    init_db(_db_path())
     yield
 
 
 app = FastAPI(
     title="CodeDNA API",
-    description="AI kod şeffaflık aracı — REST API",
+    description="AI code transparency tool — REST API",
     version=__version__,
     docs_url="/docs",
     redoc_url="/redoc",
     lifespan=lifespan,
 )
 
-# CORS — dashboard veya harici araçlar için tam açık
+# CORS — fully open for dashboard or external tools
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -74,393 +74,393 @@ app.add_middleware(
 
 
 # ---------------------------------------------------------------------------
-# Pydantic modelleri
+# Pydantic models
 # ---------------------------------------------------------------------------
-class SurveyGirdi(BaseModel):
-    """Anlama anketi giriş verisi."""
-    skor_1: float  # Bu değişikliği 3 ay sonra açıklayabilir misin? [1-5]
-    skor_2: float  # Bir hata çıksa debug edebilir misin? [1-5]
-    skor_3: float  # Başkası sorsa, nasıl çalıştığını anlatabilir misin? [1-5]
+class SurveyInput(BaseModel):
+    """Understanding survey input data."""
+    score_1: float  # Can you explain this change 3 months from now? [1-5]
+    score_2: float  # Could you debug it if a bug appeared? [1-5]
+    score_3: float  # Could you explain how it works to someone else? [1-5]
 
 
 # ---------------------------------------------------------------------------
-# Endpoint'ler
+# Endpoints
 # ---------------------------------------------------------------------------
 
-@app.get("/health", tags=["Sistem"])
-async def saglik_kontrolu() -> dict:
-    """Servisin ayakta olduğunu doğrula."""
+@app.get("/health", tags=["System"])
+async def health_check() -> dict:
+    """Verify the service is running."""
     return {
-        "durum": "çalışıyor",
-        "versiyon": __version__,
-        "zaman": datetime.utcnow().isoformat(),
+        "status": "running",
+        "version": __version__,
+        "timestamp": datetime.utcnow().isoformat(),
     }
 
 
 @app.get("/repo/summary", tags=["Repo"])
-async def repo_ozeti() -> dict:
-    """Repo geneli özet: ortalama AI skoru, toplam commit, risk seviyesi."""
-    db = _db_yolu()
+async def repo_summary() -> dict:
+    """Repo-wide summary: average AI score, total commits, risk level."""
+    db = _db_path()
     init_db(db)
 
-    commitler = get_commit_history(limit=1000, db_path=db)
+    commits = get_commit_history(limit=1000, db_path=db)
 
-    if not commitler:
+    if not commits:
         return {
-            "toplam_commit": 0,
-            "ortalama_ai_skoru": None,
-            "risk_seviyesi": "BİLİNMİYOR",
-            "anlama_skoru_olan_commit": 0,
-            "ortalama_anlama_skoru": None,
+            "total_commits": 0,
+            "avg_ai_score": None,
+            "risk_level": "UNKNOWN",
+            "commits_with_understanding": 0,
+            "avg_understanding_score": None,
         }
 
-    toplam = len(commitler)
-    anlama_skorlari = [
+    total = len(commits)
+    understanding_scores = [
         float(c["understanding_score"])
-        for c in commitler
+        for c in commits
         if c["understanding_score"] is not None
     ]
 
-    # Dosya skorlarından ortalama AI olasılığını hesapla
-    tum_ai_skorlari: list[float] = []
-    for commit in commitler[:50]:  # Son 50 commit yeterli
-        dosyalar = get_file_scores_for_commit(commit["commit_hash"], db_path=db)
-        for d in dosyalar:
-            if d["ai_probability"] is not None:
-                tum_ai_skorlari.append(float(d["ai_probability"]))
+    # Calculate average AI probability from file scores
+    all_ai_scores: list[float] = []
+    for commit in commits[:50]:  # Last 50 commits is sufficient
+        files = get_file_scores_for_commit(commit["commit_hash"], db_path=db)
+        for f in files:
+            if f["ai_probability"] is not None:
+                all_ai_scores.append(float(f["ai_probability"]))
 
-    ort_ai = sum(tum_ai_skorlari) / len(tum_ai_skorlari) if tum_ai_skorlari else None
-    ort_anlama = sum(anlama_skorlari) / len(anlama_skorlari) if anlama_skorlari else None
+    avg_ai = sum(all_ai_scores) / len(all_ai_scores) if all_ai_scores else None
+    avg_understanding = sum(understanding_scores) / len(understanding_scores) if understanding_scores else None
 
-    # Risk seviyesi
-    if ort_ai is None:
-        risk = "BİLİNMİYOR"
-    elif ort_ai >= 0.7:
-        risk = "YÜKSEK"
-    elif ort_ai >= 0.4:
-        risk = "ORTA"
+    # Risk level
+    if avg_ai is None:
+        risk = "UNKNOWN"
+    elif avg_ai >= 0.7:
+        risk = "HIGH"
+    elif avg_ai >= 0.4:
+        risk = "MEDIUM"
     else:
-        risk = "DÜŞÜK"
+        risk = "LOW"
 
     return {
-        "toplam_commit": toplam,
-        "ortalama_ai_skoru": round(ort_ai, 3) if ort_ai is not None else None,
-        "ortalama_ai_yuzdesi": round(ort_ai * 100, 1) if ort_ai is not None else None,
-        "risk_seviyesi": risk,
-        "anlama_skoru_olan_commit": len(anlama_skorlari),
-        "ortalama_anlama_skoru": round(ort_anlama, 2) if ort_anlama is not None else None,
+        "total_commits": total,
+        "avg_ai_score": round(avg_ai, 3) if avg_ai is not None else None,
+        "avg_ai_percentage": round(avg_ai * 100, 1) if avg_ai is not None else None,
+        "risk_level": risk,
+        "commits_with_understanding": len(understanding_scores),
+        "avg_understanding_score": round(avg_understanding, 2) if avg_understanding is not None else None,
     }
 
 
 @app.get("/repo/files", tags=["Repo"])
-async def repo_dosyalari(
-    min_risk: float = Query(0.0, ge=0.0, le=1.0, description="Minimum AI olasılığı filtresi"),
-    max_dosya: int = Query(200, ge=1, le=1000, description="Maksimum dosya sayısı"),
+async def repo_files(
+    min_risk: float = Query(0.0, ge=0.0, le=1.0, description="Minimum AI probability filter"),
+    max_files: int = Query(200, ge=1, le=1000, description="Maximum number of files"),
 ) -> dict:
-    """Tüm desteklenen dosyaları tara ve AI skorlarını döndür."""
-    kok = _repo_yolu()
+    """Scan all supported files and return AI scores."""
+    root = _repo_path()
 
-    sonuclar = scan_repository(kok, max_files=max_dosya)
+    results = scan_repository(root, max_files=max_files)
 
-    # Filtrele ve sırala
+    # Filter and sort
     if min_risk > 0:
-        sonuclar = [s for s in sonuclar if s.ai_probability >= min_risk]
-    sonuclar.sort(key=lambda s: s.ai_probability, reverse=True)
+        results = [s for s in results if s.ai_probability >= min_risk]
+    results.sort(key=lambda s: s.ai_probability, reverse=True)
 
-    dosyalar = []
-    for s in sonuclar:
-        # Göreli yol hesapla
+    files = []
+    for s in results:
+        # Calculate relative path
         try:
-            goreceli = str(Path(s.file_path).relative_to(kok))
+            relative = str(Path(s.file_path).relative_to(root))
         except ValueError:
-            goreceli = s.file_path
+            relative = s.file_path
 
-        dosyalar.append({
-            "dosya_yolu": goreceli,
-            "ai_olasıligi": round(s.ai_probability, 3),
-            "ai_yuzdesi": round(s.ai_probability * 100, 1),
-            "karmasiklik_skoru": round(s.complexity_score, 1),
-            "karmasiklik_etiketi": s.complexity_label,
-            "yorum_orani": round(s.comment_ratio, 3),
-            "ortalama_fonksiyon_uzunlugu": round(s.avg_function_length, 1),
-            "tek_commit_orani": round(s.single_commit_ratio, 3),
-            "toplam_satir": s.total_lines,
-            "fonksiyon_sayisi": s.function_count,
+        files.append({
+            "file_path": relative,
+            "ai_probability": round(s.ai_probability, 3),
+            "ai_percentage": round(s.ai_probability * 100, 1),
+            "complexity_score": round(s.complexity_score, 1),
+            "complexity_label": s.complexity_label,
+            "comment_ratio": round(s.comment_ratio, 3),
+            "avg_function_length": round(s.avg_function_length, 1),
+            "single_commit_ratio": round(s.single_commit_ratio, 3),
+            "total_lines": s.total_lines,
+            "function_count": s.function_count,
         })
 
-    toplam_ai = sum(d["ai_olasıligi"] for d in dosyalar)
-    ort_ai = toplam_ai / len(dosyalar) if dosyalar else 0
+    total_ai = sum(f["ai_probability"] for f in files)
+    avg_ai = total_ai / len(files) if files else 0
 
     return {
-        "toplam_dosya": len(dosyalar),
-        "ortalama_ai_skoru": round(ort_ai, 3),
-        "dosyalar": dosyalar,
+        "total_files": len(files),
+        "avg_ai_score": round(avg_ai, 3),
+        "files": files,
     }
 
 
 @app.get("/commits", tags=["Commit"])
-async def commit_listesi(
-    limit: int = Query(20, ge=1, le=100, description="Döndürülecek commit sayısı"),
+async def commit_list(
+    limit: int = Query(20, ge=1, le=100, description="Number of commits to return"),
 ) -> dict:
-    """Geçmiş commit listesini döndür."""
-    db = _db_yolu()
+    """Return historical commit list."""
+    db = _db_path()
     init_db(db)
-    commitler = get_commit_history(limit=limit, db_path=db)
+    commits = get_commit_history(limit=limit, db_path=db)
 
-    liste = []
-    for c in commitler:
-        liste.append({
+    items = []
+    for c in commits:
+        items.append({
             "commit_hash": c["commit_hash"],
-            "hash_kisa": c["commit_hash"][:8] if c["commit_hash"] else "",
-            "yazar": c["author"],
-            "zaman_dam": c["timestamp"],
-            "tarih": (
+            "short_hash": c["commit_hash"][:8] if c["commit_hash"] else "",
+            "author": c["author"],
+            "timestamp": c["timestamp"],
+            "date": (
                 datetime.fromtimestamp(c["timestamp"]).strftime("%Y-%m-%d %H:%M")
                 if c["timestamp"] else None
             ),
-            "degisen_dosya_sayisi": c["files_changed"],
-            "anlama_skoru": (
+            "files_changed": c["files_changed"],
+            "understanding_score": (
                 round(float(c["understanding_score"]), 2)
                 if c["understanding_score"] is not None else None
             ),
-            "olusturulma": c["created_at"],
+            "created_at": c["created_at"],
         })
 
-    return {"toplam": len(liste), "commitler": liste}
+    return {"total": len(items), "commits": items}
 
 
 @app.get("/commits/{commit_hash}", tags=["Commit"])
-async def commit_detayi(commit_hash: str) -> dict:
-    """Tek commit detayı ve ilgili dosya skorlarını döndür."""
-    db = _db_yolu()
+async def commit_detail(commit_hash: str) -> dict:
+    """Return single commit detail and related file scores."""
+    db = _db_path()
     init_db(db)
 
-    # Tam hash veya kısa hash ile ara
-    commitler = get_commit_history(limit=1000, db_path=db)
-    bulunan = None
-    for c in commitler:
+    # Search by full or short hash
+    commits = get_commit_history(limit=1000, db_path=db)
+    found = None
+    for c in commits:
         if c["commit_hash"] and (
             c["commit_hash"] == commit_hash
             or c["commit_hash"].startswith(commit_hash)
         ):
-            bulunan = c
+            found = c
             break
 
-    if not bulunan:
+    if not found:
         raise HTTPException(
             status_code=404,
-            detail=f"'{commit_hash}' hash'li commit bulunamadı.",
+            detail=f"Commit '{commit_hash}' not found.",
         )
 
-    dosyalar = get_file_scores_for_commit(bulunan["commit_hash"], db_path=db)
-    dosya_listesi = [
+    files = get_file_scores_for_commit(found["commit_hash"], db_path=db)
+    file_list = [
         {
-            "dosya_yolu": d["file_path"],
-            "ai_olasıligi": round(float(d["ai_probability"]), 3) if d["ai_probability"] is not None else None,
-            "karmasiklik_skoru": round(float(d["complexity_score"]), 1) if d["complexity_score"] is not None else None,
-            "yorum_orani": round(float(d["comment_ratio"]), 3) if d["comment_ratio"] is not None else None,
-            "anlama_skoru": round(float(d["understanding_score"]), 2) if d["understanding_score"] is not None else None,
+            "file_path": f["file_path"],
+            "ai_probability": round(float(f["ai_probability"]), 3) if f["ai_probability"] is not None else None,
+            "complexity_score": round(float(f["complexity_score"]), 1) if f["complexity_score"] is not None else None,
+            "comment_ratio": round(float(f["comment_ratio"]), 3) if f["comment_ratio"] is not None else None,
+            "understanding_score": round(float(f["understanding_score"]), 2) if f["understanding_score"] is not None else None,
         }
-        for d in dosyalar
+        for f in files
     ]
 
     return {
-        "commit_hash": bulunan["commit_hash"],
-        "yazar": bulunan["author"],
-        "tarih": (
-            datetime.fromtimestamp(bulunan["timestamp"]).strftime("%Y-%m-%d %H:%M")
-            if bulunan["timestamp"] else None
+        "commit_hash": found["commit_hash"],
+        "author": found["author"],
+        "date": (
+            datetime.fromtimestamp(found["timestamp"]).strftime("%Y-%m-%d %H:%M")
+            if found["timestamp"] else None
         ),
-        "degisen_dosya_sayisi": bulunan["files_changed"],
-        "anlama_skoru": (
-            round(float(bulunan["understanding_score"]), 2)
-            if bulunan["understanding_score"] is not None else None
+        "files_changed": found["files_changed"],
+        "understanding_score": (
+            round(float(found["understanding_score"]), 2)
+            if found["understanding_score"] is not None else None
         ),
-        "dosyalar": dosya_listesi,
+        "files": file_list,
     }
 
 
-@app.post("/survey/{commit_hash}", tags=["Anket"])
-async def anket_kaydet(commit_hash: str, girdi: SurveyGirdi) -> dict:
-    """Anlama anketi sonucunu kaydet."""
-    # Skor doğrulama
-    for alan, deger in [("skor_1", girdi.skor_1), ("skor_2", girdi.skor_2), ("skor_3", girdi.skor_3)]:
-        if not (1.0 <= deger <= 5.0):
+@app.post("/survey/{commit_hash}", tags=["Survey"])
+async def save_survey(commit_hash: str, data: SurveyInput) -> dict:
+    """Save understanding survey result."""
+    # Validate scores
+    for field, value in [("score_1", data.score_1), ("score_2", data.score_2), ("score_3", data.score_3)]:
+        if not (1.0 <= value <= 5.0):
             raise HTTPException(
                 status_code=422,
-                detail=f"'{alan}' değeri 1 ile 5 arasında olmalıdır, gelen: {deger}",
+                detail=f"'{field}' must be between 1 and 5, got: {value}",
             )
 
-    ortalama = (girdi.skor_1 + girdi.skor_2 + girdi.skor_3) / 3.0
-    db = _db_yolu()
+    average = (data.score_1 + data.score_2 + data.score_3) / 3.0
+    db = _db_path()
     init_db(db)
 
-    # Commit var mı kontrol et
-    commitler = get_commit_history(limit=1000, db_path=db)
-    bulunan_hash = None
-    for c in commitler:
+    # Check if commit exists
+    commits = get_commit_history(limit=1000, db_path=db)
+    found_hash = None
+    for c in commits:
         if c["commit_hash"] and (
             c["commit_hash"] == commit_hash
             or c["commit_hash"].startswith(commit_hash)
         ):
-            bulunan_hash = c["commit_hash"]
+            found_hash = c["commit_hash"]
             break
 
-    if not bulunan_hash:
+    if not found_hash:
         raise HTTPException(
             status_code=404,
-            detail=f"'{commit_hash}' hash'li commit bulunamadı.",
+            detail=f"Commit '{commit_hash}' not found.",
         )
 
-    update_understanding_score(bulunan_hash, ortalama, db_path=db)
+    update_understanding_score(found_hash, average, db_path=db)
 
     return {
-        "commit_hash": bulunan_hash,
-        "anlama_skoru": round(ortalama, 2),
-        "mesaj": "Anlama skoru başarıyla kaydedildi.",
+        "commit_hash": found_hash,
+        "understanding_score": round(average, 2),
+        "message": "Understanding score saved successfully.",
     }
 
 
-@app.get("/report", tags=["Rapor"])
-async def rapor(fmt: str = Query("json", description="Çıktı formatı: 'json' veya 'html'")) -> object:
-    """Repo özet raporunu JSON veya HTML olarak döndür."""
-    db = _db_yolu()
+@app.get("/report", tags=["Report"])
+async def report(fmt: str = Query("json", description="Output format: 'json' or 'html'")) -> object:
+    """Return repo summary report as JSON or HTML."""
+    db = _db_path()
     init_db(db)
-    kok = _repo_yolu()
+    root = _repo_path()
 
-    # Veri topla
-    commitler = get_commit_history(limit=50, db_path=db)
-    dosyalar_sonuc = scan_repository(kok, max_files=100)
-    dosyalar_sonuc.sort(key=lambda s: s.ai_probability, reverse=True)
+    # Collect data
+    commits = get_commit_history(limit=50, db_path=db)
+    file_results = scan_repository(root, max_files=100)
+    file_results.sort(key=lambda s: s.ai_probability, reverse=True)
 
-    tum_ai = [s.ai_probability for s in dosyalar_sonuc]
-    ort_ai = sum(tum_ai) / len(tum_ai) if tum_ai else 0.0
+    all_ai = [s.ai_probability for s in file_results]
+    avg_ai = sum(all_ai) / len(all_ai) if all_ai else 0.0
 
-    anlama_skorlari = [
+    understanding_scores = [
         float(c["understanding_score"])
-        for c in commitler
+        for c in commits
         if c["understanding_score"] is not None
     ]
-    ort_anlama = sum(anlama_skorlari) / len(anlama_skorlari) if anlama_skorlari else None
+    avg_understanding = sum(understanding_scores) / len(understanding_scores) if understanding_scores else None
 
-    if ort_ai >= 0.7:
-        risk = "YÜKSEK"
-    elif ort_ai >= 0.4:
-        risk = "ORTA"
+    if avg_ai >= 0.7:
+        risk = "HIGH"
+    elif avg_ai >= 0.4:
+        risk = "MEDIUM"
     else:
-        risk = "DÜŞÜK"
+        risk = "LOW"
 
     if fmt == "html":
-        html = _rapor_html_olustur(
-            repo_adi=kok.name,
-            toplam_dosya=len(dosyalar_sonuc),
-            ort_ai=ort_ai,
+        html = _build_html_report(
+            repo_name=root.name,
+            total_files=len(file_results),
+            avg_ai=avg_ai,
             risk=risk,
-            ort_anlama=ort_anlama,
-            toplam_commit=len(commitler),
-            dosyalar=dosyalar_sonuc,
-            commitler=commitler,
-            kok=kok,
+            avg_understanding=avg_understanding,
+            total_commits=len(commits),
+            files=file_results,
+            commits=commits,
+            root=root,
         )
         return HTMLResponse(content=html)
 
-    # JSON formatı
+    # JSON format
     return {
-        "repo": kok.name,
-        "tarih": datetime.utcnow().isoformat(),
-        "ozet": {
-            "toplam_dosya": len(dosyalar_sonuc),
-            "ortalama_ai_skoru": round(ort_ai, 3),
-            "risk_seviyesi": risk,
-            "toplam_commit": len(commitler),
-            "ortalama_anlama_skoru": round(ort_anlama, 2) if ort_anlama else None,
+        "repo": root.name,
+        "date": datetime.utcnow().isoformat(),
+        "summary": {
+            "total_files": len(file_results),
+            "avg_ai_score": round(avg_ai, 3),
+            "risk_level": risk,
+            "total_commits": len(commits),
+            "avg_understanding_score": round(avg_understanding, 2) if avg_understanding else None,
         },
-        "dosyalar": [
+        "files": [
             {
-                "yol": str(Path(s.file_path).relative_to(kok)) if Path(s.file_path).is_relative_to(kok) else s.file_path,
-                "ai_yuzdesi": round(s.ai_probability * 100, 1),
-                "karmasiklik": s.complexity_label,
-                "satir": s.total_lines,
+                "path": str(Path(s.file_path).relative_to(root)) if Path(s.file_path).is_relative_to(root) else s.file_path,
+                "ai_percentage": round(s.ai_probability * 100, 1),
+                "complexity": s.complexity_label,
+                "lines": s.total_lines,
             }
-            for s in dosyalar_sonuc[:20]
+            for s in file_results[:20]
         ],
     }
 
 
 # ---------------------------------------------------------------------------
-# HTML rapor üretici (Jinja2 yok — f-string)
+# HTML report builder (no Jinja2 — f-string)
 # ---------------------------------------------------------------------------
-def _rapor_html_olustur(
-    repo_adi: str,
-    toplam_dosya: int,
-    ort_ai: float,
+def _build_html_report(
+    repo_name: str,
+    total_files: int,
+    avg_ai: float,
     risk: str,
-    ort_anlama: Optional[float],
-    toplam_commit: int,
-    dosyalar: list,
-    commitler: list,
-    kok: Path,
+    avg_understanding: Optional[float],
+    total_commits: int,
+    files: list,
+    commits: list,
+    root: Path,
 ) -> str:
-    """Inline CSS ile sade HTML rapor üret."""
-    tarih_str = datetime.now().strftime("%d %B %Y, %H:%M")
-    risk_renk = {"YÜKSEK": "#e74c3c", "ORTA": "#f39c12", "DÜŞÜK": "#27ae60"}.get(risk, "#95a5a6")
+    """Generate a plain HTML report with inline CSS."""
+    date_str = datetime.now().strftime("%d %B %Y, %H:%M")
+    risk_color = {"HIGH": "#e74c3c", "MEDIUM": "#f39c12", "LOW": "#27ae60"}.get(risk, "#95a5a6")
 
-    anlama_str = f"{ort_anlama:.1f}/5" if ort_anlama is not None else "Veri yok"
+    understanding_str = f"{avg_understanding:.1f}/5" if avg_understanding is not None else "No data"
 
-    # Dosya satırları
-    dosya_satirlari = ""
-    for s in dosyalar:
+    # File rows
+    file_rows = ""
+    for s in files:
         try:
-            yol = str(Path(s.file_path).relative_to(kok))
+            path = str(Path(s.file_path).relative_to(root))
         except ValueError:
-            yol = s.file_path
+            path = s.file_path
 
-        yuzde = s.ai_probability * 100
-        if yuzde >= 70:
-            renk = "#e74c3c"
+        pct = s.ai_probability * 100
+        if pct >= 70:
+            color = "#e74c3c"
             emoji = "🔴"
-        elif yuzde >= 40:
-            renk = "#f39c12"
+        elif pct >= 40:
+            color = "#f39c12"
             emoji = "🟡"
         else:
-            renk = "#27ae60"
+            color = "#27ae60"
             emoji = "🟢"
 
-        dosya_satirlari += f"""
+        file_rows += f"""
         <tr>
-            <td style="font-family:monospace;font-size:13px">{yol}</td>
-            <td style="color:{renk};font-weight:bold;text-align:center">{emoji} %{yuzde:.0f}</td>
+            <td style="font-family:monospace;font-size:13px">{path}</td>
+            <td style="color:{color};font-weight:bold;text-align:center">{emoji} {pct:.0f}%</td>
             <td style="text-align:center">{s.complexity_label}</td>
             <td style="text-align:right">{s.total_lines}</td>
             <td style="text-align:right">{s.function_count}</td>
         </tr>"""
 
-    # Commit satırları
-    commit_satirlari = ""
-    for c in commitler[:20]:
-        tarih = (
+    # Commit rows
+    commit_rows = ""
+    for c in commits[:20]:
+        date = (
             datetime.fromtimestamp(c["timestamp"]).strftime("%Y-%m-%d %H:%M")
             if c["timestamp"] else "?"
         )
-        anlama = (
+        understanding = (
             f"{float(c['understanding_score']):.1f}/5"
             if c["understanding_score"] is not None else "—"
         )
-        commit_satirlari += f"""
+        commit_rows += f"""
         <tr>
             <td style="font-family:monospace">{(c['commit_hash'] or '')[:8]}</td>
             <td>{c['author'] or '?'}</td>
-            <td>{tarih}</td>
+            <td>{date}</td>
             <td style="text-align:right">{c['files_changed'] or 0}</td>
-            <td style="text-align:center">{anlama}</td>
+            <td style="text-align:center">{understanding}</td>
         </tr>"""
 
     return f"""<!DOCTYPE html>
-<html lang="tr">
+<html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>🧬 CodeDNA Raporu — {repo_adi}</title>
+<title>🧬 CodeDNA Report — {repo_name}</title>
 <style>
   * {{ box-sizing: border-box; margin: 0; padding: 0; }}
   body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
@@ -484,279 +484,278 @@ def _rapor_html_olustur(
   tr:hover td {{ background: #252d3d; }}
   .badge {{ display: inline-block; padding: 3px 10px; border-radius: 20px;
             font-size: 12px; font-weight: 600; color: white;
-            background: {risk_renk}; }}
+            background: {risk_color}; }}
   footer {{ margin-top: 40px; color: #4a5568; font-size: 12px; text-align: center; }}
 </style>
 </head>
 <body>
-<h1>🧬 CodeDNA Raporu</h1>
-<p class="subtitle">📁 {repo_adi} &nbsp;·&nbsp; 📅 {tarih_str}</p>
+<h1>🧬 CodeDNA Report</h1>
+<p class="subtitle">📁 {repo_name} &nbsp;·&nbsp; 📅 {date_str}</p>
 
 <div class="cards">
   <div class="card">
-    <div class="card-label">Toplam Dosya</div>
-    <div class="card-value">{toplam_dosya}</div>
+    <div class="card-label">Total Files</div>
+    <div class="card-value">{total_files}</div>
   </div>
   <div class="card">
-    <div class="card-label">Ort. AI Skoru</div>
-    <div class="card-value">%{ort_ai*100:.0f}</div>
+    <div class="card-label">Avg. AI Score</div>
+    <div class="card-value">{avg_ai*100:.0f}%</div>
   </div>
   <div class="card">
-    <div class="card-label">Risk Seviyesi</div>
+    <div class="card-label">Risk Level</div>
     <div class="card-value"><span class="badge">{risk}</span></div>
   </div>
   <div class="card">
-    <div class="card-label">Toplam Commit</div>
-    <div class="card-value">{toplam_commit}</div>
+    <div class="card-label">Total Commits</div>
+    <div class="card-value">{total_commits}</div>
   </div>
   <div class="card">
-    <div class="card-label">Ort. Anlama</div>
-    <div class="card-value">{anlama_str}</div>
+    <div class="card-label">Avg. Understanding</div>
+    <div class="card-value">{understanding_str}</div>
   </div>
 </div>
 
-<h2>Dosya Analizi</h2>
+<h2>File Analysis</h2>
 <table>
   <thead>
     <tr>
-      <th>Dosya</th><th>AI Olasılığı</th><th>Karmaşıklık</th>
-      <th style="text-align:right">Satır</th><th style="text-align:right">Fonksiyon</th>
+      <th>File</th><th>AI Probability</th><th>Complexity</th>
+      <th style="text-align:right">Lines</th><th style="text-align:right">Functions</th>
     </tr>
   </thead>
-  <tbody>{dosya_satirlari}</tbody>
+  <tbody>{file_rows}</tbody>
 </table>
 
-<h2>Commit Geçmişi</h2>
+<h2>Commit History</h2>
 <table>
   <thead>
     <tr>
-      <th>Hash</th><th>Yazar</th><th>Tarih</th>
-      <th style="text-align:right">Dosya</th><th style="text-align:center">Anlama</th>
+      <th>Hash</th><th>Author</th><th>Date</th>
+      <th style="text-align:right">Files</th><th style="text-align:center">Understanding</th>
     </tr>
   </thead>
-  <tbody>{commit_satirlari}</tbody>
+  <tbody>{commit_rows}</tbody>
 </table>
 
-<footer>🧬 CodeDNA v{__version__} &nbsp;·&nbsp; codedna raporu otomatik oluşturuldu</footer>
+<footer>🧬 CodeDNA v{__version__} &nbsp;·&nbsp; generated by codedna report</footer>
 </body>
 </html>"""
 
 
 # ---------------------------------------------------------------------------
-# Yardımcı: plan 403 yanıtı
+# Helper: plan 403 response
 # ---------------------------------------------------------------------------
-def _plan_403(ozellik: str, tr_mesaj: str, en_mesaj: str) -> HTTPException:
-    """Plan kısıtlaması için standart 403 hatası üret."""
+def _plan_403(feature: str, tr_message: str, en_message: str) -> HTTPException:
+    """Generate a standard 403 error for plan restrictions."""
     return HTTPException(
         status_code=403,
         detail={
-            "hata": tr_mesaj,
-            "error": en_mesaj,
-            "ozellik": ozellik,
-            "gerekli_plan": "team",
+            "error": en_message,
+            "feature": feature,
+            "required_plan": "team",
         },
     )
 
 
 # ---------------------------------------------------------------------------
-# Bus Factor endpoint'leri
+# Bus Factor endpoints
 # ---------------------------------------------------------------------------
 
 @app.get("/bus-factor", tags=["Bus Factor"])
-async def bus_factor_listesi(
-    max_dosya: int = Query(200, ge=1, le=500, description="Maksimum dosya sayısı"),
+async def bus_factor_list(
+    max_files: int = Query(200, ge=1, le=500, description="Maximum number of files"),
 ) -> dict:
-    """Tüm dosyalar için bus factor listesi. Team+ planı gerektirir."""
+    """Bus factor list for all files. Requires Team+ plan."""
     from codedna.plan import is_feature_available
     from codedna.bus_factor import calculate_bus_factor
 
     if not is_feature_available("bus_factor"):
         raise _plan_403(
             "bus_factor",
-            "Bu özellik Team planında mevcut.",
+            "This feature is available on Team plan.",
             "This feature is available on Team plan.",
         )
 
-    kok = _repo_yolu()
-    db = _db_yolu()
+    root = _repo_path()
+    db = _db_path()
     init_db(db)
 
-    sonuclar = calculate_bus_factor(kok, db, max_dosya=max_dosya)
+    results = calculate_bus_factor(root, db, max_files=max_files)
 
     return {
-        "toplam_dosya": len(sonuclar),
-        "kritik_sayisi": sum(1 for s in sonuclar if s.risk == "KRİTİK"),
-        "riskli_sayisi": sum(1 for s in sonuclar if s.risk == "RİSKLİ"),
-        "dosyalar": [
+        "total_files": len(results),
+        "critical_count": sum(1 for s in results if s.risk == "CRITICAL"),
+        "risky_count": sum(1 for s in results if s.risk == "RISKY"),
+        "files": [
             {
-                "dosya_yolu": s.dosya_yolu,
+                "file_path": s.file_path,
                 "bus_factor": s.bus_factor,
-                "birincil_sahip": s.birincil_sahip,
-                "sahiplik_yuzdesi": s.sahiplik_yuzdesi,
+                "primary_owner": s.primary_owner,
+                "ownership_percentage": s.ownership_percentage,
                 "risk": s.risk,
-                "anlayan_yazarlar": s.anlayan_yazarlar,
-                "toplam_satir": s.toplam_satir,
+                "knowledgeable_authors": s.knowledgeable_authors,
+                "total_lines": s.total_lines,
             }
-            for s in sonuclar
+            for s in results
         ],
     }
 
 
 @app.get("/bus-factor/critical", tags=["Bus Factor"])
-async def bus_factor_kritik() -> dict:
-    """Sadece bus_factor=1 olan kritik dosyaları döndür. Team+ planı gerektirir."""
+async def bus_factor_critical() -> dict:
+    """Return only critical files where bus_factor=1. Requires Team+ plan."""
     from codedna.plan import is_feature_available
     from codedna.bus_factor import get_at_risk_files
 
     if not is_feature_available("bus_factor"):
         raise _plan_403(
             "bus_factor",
-            "Bu özellik Team planında mevcut.",
+            "This feature is available on Team plan.",
             "This feature is available on Team plan.",
         )
 
-    kok = _repo_yolu()
-    db = _db_yolu()
+    root = _repo_path()
+    db = _db_path()
     init_db(db)
 
-    sonuclar = get_at_risk_files(kok, db)
+    results = get_at_risk_files(root, db)
 
     return {
-        "kritik_sayisi": len(sonuclar),
-        "dosyalar": [
+        "critical_count": len(results),
+        "files": [
             {
-                "dosya_yolu": s.dosya_yolu,
+                "file_path": s.file_path,
                 "bus_factor": s.bus_factor,
-                "birincil_sahip": s.birincil_sahip,
-                "sahiplik_yuzdesi": s.sahiplik_yuzdesi,
+                "primary_owner": s.primary_owner,
+                "ownership_percentage": s.ownership_percentage,
                 "risk": s.risk,
-                "toplam_satir": s.toplam_satir,
+                "total_lines": s.total_lines,
             }
-            for s in sonuclar
+            for s in results
         ],
     }
 
 
 # ---------------------------------------------------------------------------
-# Teknik Borç endpoint'leri
+# Technical Debt endpoints
 # ---------------------------------------------------------------------------
 
-@app.get("/debt/summary", tags=["Teknik Borç"])
-async def borclu_ozet(
-    rate: float = Query(75.0, ge=1.0, le=1000.0, description="Saatlik maliyet ($/saat)"),
+@app.get("/debt/summary", tags=["Technical Debt"])
+async def debt_summary(
+    rate: float = Query(75.0, ge=1.0, le=1000.0, description="Hourly rate ($/hour)"),
 ) -> dict:
     """
-    Repo geneli teknik borç özeti.
-    Free planda dolar tutarları maskelenir.
+    Repo-wide technical debt summary.
+    Dollar amounts are masked on the Free plan.
     """
     from codedna.plan import get_current_plan, Plan
     from codedna.tech_debt import calculate_repo_debt
 
-    kok = _repo_yolu()
-    db = _db_yolu()
+    root = _repo_path()
+    db = _db_path()
     init_db(db)
 
-    ozet = calculate_repo_debt(kok, db, hourly_rate=rate)
-    mevcut_plan = get_current_plan()
-    dolar_gizli = mevcut_plan == Plan.FREE
+    summary = calculate_repo_debt(root, db, hourly_rate=rate)
+    current_plan = get_current_plan()
+    hide_dollars = current_plan == Plan.FREE
 
-    en_pahali = []
-    for d in ozet.en_pahali_5:
+    top_5 = []
+    for d in summary.top_5_most_expensive:
         try:
-            goreceli = str(Path(d.dosya_yolu).relative_to(kok))
+            relative = str(Path(d.file_path).relative_to(root))
         except ValueError:
-            goreceli = d.dosya_yolu
+            relative = d.file_path
 
-        en_pahali.append({
-            "dosya_yolu": goreceli,
-            "debt_saatleri": d.debt_saatleri,
-            "aylik_maliyet_usd": None if dolar_gizli else d.aylik_maliyet_usd,
-            "risk_seviyesi": d.risk_seviyesi,
+        top_5.append({
+            "file_path": relative,
+            "debt_hours": d.debt_hours,
+            "monthly_cost_usd": None if hide_dollars else d.monthly_cost_usd,
+            "risk_level": d.risk_level,
         })
 
     return {
-        "toplam_debt_saatleri": ozet.toplam_debt_saatleri,
-        "toplam_aylik_maliyet_usd": None if dolar_gizli else ozet.toplam_aylik_maliyet_usd,
-        "dolar_gizli": dolar_gizli,
-        "saatlik_ucret": rate,
-        "toplam_dosya": ozet.toplam_dosya,
-        "en_pahali_5": en_pahali,
+        "total_debt_hours": summary.total_debt_hours,
+        "total_monthly_cost_usd": None if hide_dollars else summary.total_monthly_cost_usd,
+        "dollars_hidden": hide_dollars,
+        "hourly_rate": rate,
+        "total_files": summary.total_files,
+        "top_5_most_expensive": top_5,
     }
 
 
-@app.get("/debt/files", tags=["Teknik Borç"])
-async def borclu_dosyalar(
-    rate: float = Query(75.0, ge=1.0, le=1000.0, description="Saatlik maliyet ($/saat)"),
-    limit: int = Query(20, ge=1, le=100, description="Döndürülecek dosya sayısı"),
+@app.get("/debt/files", tags=["Technical Debt"])
+async def debt_files(
+    rate: float = Query(75.0, ge=1.0, le=1000.0, description="Hourly rate ($/hour)"),
+    limit: int = Query(20, ge=1, le=100, description="Number of files to return"),
 ) -> dict:
     """
-    Dosya bazlı teknik borç listesi, en maliyetliden sıralı.
-    Free planda dolar tutarları maskelenir.
+    Per-file technical debt list, sorted by most expensive.
+    Dollar amounts are masked on the Free plan.
     """
     from codedna.plan import get_current_plan, Plan
     from codedna.tech_debt import calculate_repo_debt
 
-    kok = _repo_yolu()
-    db = _db_yolu()
+    root = _repo_path()
+    db = _db_path()
     init_db(db)
 
-    ozet = calculate_repo_debt(kok, db, hourly_rate=rate)
-    mevcut_plan = get_current_plan()
-    dolar_gizli = mevcut_plan == Plan.FREE
+    summary = calculate_repo_debt(root, db, hourly_rate=rate)
+    current_plan = get_current_plan()
+    hide_dollars = current_plan == Plan.FREE
 
-    # Tüm dosyaları en pahali'dan sıralı al
+    # Get all files sorted by most expensive
     from codedna.tech_debt import calculate_file_debt
     from codedna.scorer import scan_repository
 
-    taranan = scan_repository(kok, max_files=200)
-    taranan.sort(key=lambda s: s.ai_probability, reverse=True)
+    scanned = scan_repository(root, max_files=200)
+    scanned.sort(key=lambda s: s.ai_probability, reverse=True)
 
-    dosya_listesi = []
-    for s in taranan[:limit]:
-        borc = calculate_file_debt(s.file_path, db, hourly_rate=rate)
-        if borc is None:
+    file_list = []
+    for s in scanned[:limit]:
+        debt = calculate_file_debt(s.file_path, db, hourly_rate=rate)
+        if debt is None:
             continue
         try:
-            goreceli = str(Path(s.file_path).relative_to(kok))
+            relative = str(Path(s.file_path).relative_to(root))
         except ValueError:
-            goreceli = s.file_path
+            relative = s.file_path
 
-        dosya_listesi.append({
-            "dosya_yolu": goreceli,
-            "debt_saatleri": borc.debt_saatleri,
-            "aylik_maliyet_usd": None if dolar_gizli else borc.aylik_maliyet_usd,
-            "risk_seviyesi": borc.risk_seviyesi,
-            "ai_olasiligi": borc.ai_olasiligi,
-            "karmasiklik": borc.karmasiklik,
-            "toplam_satir": borc.toplam_satir,
+        file_list.append({
+            "file_path": relative,
+            "debt_hours": debt.debt_hours,
+            "monthly_cost_usd": None if hide_dollars else debt.monthly_cost_usd,
+            "risk_level": debt.risk_level,
+            "ai_probability": debt.ai_probability,
+            "complexity": debt.complexity,
+            "total_lines": debt.total_lines,
         })
 
-    dosya_listesi.sort(key=lambda d: d["debt_saatleri"], reverse=True)
+    file_list.sort(key=lambda d: d["debt_hours"], reverse=True)
 
     return {
-        "toplam_dosya": len(dosya_listesi),
-        "dolar_gizli": dolar_gizli,
-        "saatlik_ucret": rate,
-        "dosyalar": dosya_listesi,
+        "total_files": len(file_list),
+        "dollars_hidden": hide_dollars,
+        "hourly_rate": rate,
+        "files": file_list,
     }
 
 
 # ---------------------------------------------------------------------------
-# Sprint endpoint'leri
+# Sprint endpoints
 # ---------------------------------------------------------------------------
 
-class SprintGirdi(BaseModel):
-    """Yeni sprint oluşturma giriş verisi."""
-    sprint_adi: str
-    baslangic: str   # ISO date: "2026-06-01"
-    bitis: str       # ISO date: "2026-06-14"
+class SprintInput(BaseModel):
+    """New sprint creation input data."""
+    sprint_name: str
+    start_date: str   # ISO date: "2026-06-01"
+    end_date: str     # ISO date: "2026-06-14"
 
 
 @app.post("/sprints", tags=["Sprint"])
-async def sprint_olustur(girdi: SprintGirdi) -> dict:
+async def create_sprint(data: SprintInput) -> dict:
     """
-    Yeni sprint kaydı oluştur ve sağlık skoru hesapla.
-    Team+ planı gerektirir.
+    Create a new sprint record and calculate health score.
+    Requires Team+ plan.
     """
     from codedna.plan import is_feature_available
     from codedna.sprint_health import calculate_sprint_health, save_sprint_result
@@ -765,44 +764,44 @@ async def sprint_olustur(girdi: SprintGirdi) -> dict:
     if not is_feature_available("sprint_health"):
         raise _plan_403(
             "sprint_health",
-            "Bu özellik Team planında mevcut.",
+            "This feature is available on Team plan.",
             "This feature is available on Team plan.",
         )
 
     try:
-        baslangic = dt.fromisoformat(girdi.baslangic)
-        bitis = dt.fromisoformat(girdi.bitis)
+        start = dt.fromisoformat(data.start_date)
+        end = dt.fromisoformat(data.end_date)
     except ValueError as e:
-        raise HTTPException(status_code=422, detail=f"Geçersiz tarih formatı: {e}")
+        raise HTTPException(status_code=422, detail=f"Invalid date format: {e}")
 
-    if bitis <= baslangic:
-        raise HTTPException(status_code=422, detail="Bitiş tarihi başlangıçtan sonra olmalı.")
+    if end <= start:
+        raise HTTPException(status_code=422, detail="End date must be after start date.")
 
-    kok = _repo_yolu()
-    db = _db_yolu()
+    root = _repo_path()
+    db = _db_path()
     init_db(db)
 
-    sonuc = calculate_sprint_health(kok, db, baslangic, bitis, girdi.sprint_adi)
-    sprint_id = save_sprint_result(sonuc, db)
+    result = calculate_sprint_health(root, db, start, end, data.sprint_name)
+    sprint_id = save_sprint_result(result, db)
 
     return {
         "sprint_id": sprint_id,
-        "sprint_adi": sonuc.sprint_adi,
-        "health_score": sonuc.health_score,
-        "durum": sonuc.durum,
-        "avg_understanding": sonuc.avg_understanding,
-        "ai_orani": sonuc.ai_orani,
-        "debt_delta_saati": sonuc.debt_delta_saati,
-        "toplam_commit": sonuc.toplam_commit,
-        "ai_insan_orani": sonuc.ai_insan_orani_str,
+        "sprint_name": result.sprint_name,
+        "health_score": result.health_score,
+        "status": result.status,
+        "avg_understanding": result.avg_understanding,
+        "ai_ratio": result.ai_ratio,
+        "debt_delta_hours": result.debt_delta_hours,
+        "total_commits": result.total_commits,
+        "ai_human_ratio": result.ai_human_ratio_str,
     }
 
 
 @app.get("/sprints/current/health", tags=["Sprint"])
-async def aktif_sprint_sagligi() -> dict:
+async def current_sprint_health() -> dict:
     """
-    En son sprint'in sağlık skorunu döndür.
-    Team+ planı gerektirir.
+    Return the health score of the most recent sprint.
+    Requires Team+ plan.
     """
     from codedna.plan import is_feature_available
     from codedna.db import get_latest_sprint
@@ -810,79 +809,79 @@ async def aktif_sprint_sagligi() -> dict:
     if not is_feature_available("sprint_health"):
         raise _plan_403(
             "sprint_health",
-            "Bu özellik Team planında mevcut.",
+            "This feature is available on Team plan.",
             "This feature is available on Team plan.",
         )
 
-    db = _db_yolu()
+    db = _db_path()
     init_db(db)
 
     sprint = get_latest_sprint(db_path=db)
     if not sprint:
-        raise HTTPException(status_code=404, detail="Henüz kayıtlı sprint yok.")
+        raise HTTPException(status_code=404, detail="No sprint recorded yet.")
 
     return {
         "sprint_id": sprint["id"],
-        "sprint_adi": sprint["sprint_name"],
+        "sprint_name": sprint["sprint_name"],
         "health_score": sprint["health_score"],
-        "durum": _sprint_durumu(sprint["health_score"]),
+        "status": _sprint_status(sprint["health_score"]),
         "avg_understanding": sprint["avg_understanding"],
-        "debt_delta_saati": sprint["debt_delta_hours"],
-        "ai_satir": sprint["total_lines_ai"],
-        "insan_satir": sprint["total_lines_human"],
-        "baslangic": _ts_to_str(sprint["start_date"]),
-        "bitis": _ts_to_str(sprint["end_date"]),
+        "debt_delta_hours": sprint["debt_delta_hours"],
+        "ai_lines": sprint["total_lines_ai"],
+        "human_lines": sprint["total_lines_human"],
+        "start_date": _ts_to_str(sprint["start_date"]),
+        "end_date": _ts_to_str(sprint["end_date"]),
     }
 
 
 @app.get("/sprints/history", tags=["Sprint"])
-async def sprint_gecmisi(
-    limit: int = Query(10, ge=1, le=50, description="Döndürülecek sprint sayısı"),
+async def sprint_history(
+    limit: int = Query(10, ge=1, le=50, description="Number of sprints to return"),
 ) -> dict:
-    """Geçmiş sprint listesini döndür. Team+ planı gerektirir."""
+    """Return historical sprint list. Requires Team+ plan."""
     from codedna.plan import is_feature_available
     from codedna.db import get_sprint_history as db_sprint_history
 
     if not is_feature_available("sprint_health"):
         raise _plan_403(
             "sprint_health",
-            "Bu özellik Team planında mevcut.",
+            "This feature is available on Team plan.",
             "This feature is available on Team plan.",
         )
 
-    db = _db_yolu()
+    db = _db_path()
     init_db(db)
-    sprintler = db_sprint_history(limit=limit, db_path=db)
+    sprints = db_sprint_history(limit=limit, db_path=db)
 
     return {
-        "toplam": len(sprintler),
-        "sprintler": [
+        "total": len(sprints),
+        "sprints": [
             {
                 "id": s["id"],
-                "sprint_adi": s["sprint_name"],
-                "baslangic": _ts_to_str(s["start_date"]),
-                "bitis": _ts_to_str(s["end_date"]),
+                "sprint_name": s["sprint_name"],
+                "start_date": _ts_to_str(s["start_date"]),
+                "end_date": _ts_to_str(s["end_date"]),
                 "health_score": s["health_score"],
-                "durum": _sprint_durumu(s["health_score"]),
+                "status": _sprint_status(s["health_score"]),
                 "avg_understanding": s["avg_understanding"],
-                "debt_delta_saati": s["debt_delta_hours"],
-                "ai_satir": s["total_lines_ai"],
-                "insan_satir": s["total_lines_human"],
+                "debt_delta_hours": s["debt_delta_hours"],
+                "ai_lines": s["total_lines_ai"],
+                "human_lines": s["total_lines_human"],
             }
-            for s in sprintler
+            for s in sprints
         ],
     }
 
 
 # ---------------------------------------------------------------------------
-# Jira webhook endpoint'i
+# Jira webhook endpoint
 # ---------------------------------------------------------------------------
 
-@app.post("/integrations/jira/webhook", tags=["Entegrasyonlar"])
+@app.post("/integrations/jira/webhook", tags=["Integrations"])
 async def jira_webhook(request: Request) -> dict:
     """
-    Jira'dan gelen sprint event'lerini al ve işle.
-    HMAC-SHA256 imza doğrulaması ZORUNLUDUR (Team+ planı gerektirir).
+    Receive and process sprint events from Jira.
+    HMAC-SHA256 signature verification is REQUIRED (Requires Team+ plan).
     """
     from codedna.integrations.jira import (
         get_or_create_secret,
@@ -891,615 +890,518 @@ async def jira_webhook(request: Request) -> dict:
     )
     from codedna.plan import is_feature_available
 
-    # Plan kontrolü
+    # Plan check
     if not is_feature_available("sprint_health"):
         raise HTTPException(
             status_code=403,
-            detail="Jira entegrasyonu Team planında mevcut. / Jira integration requires Team plan.",
+            detail="Jira integration requires Team plan.",
         )
 
     body = await request.body()
     secret = get_or_create_secret()
-    imza = request.headers.get("X-Hub-Signature-256", "")
+    signature = request.headers.get("X-Hub-Signature-256", "")
 
-    # İmza ZORUNLU — boşsa veya geçersizse reddet
-    if not imza or not verify_signature(body, imza, secret):
+    # Signature is REQUIRED — reject if missing or invalid
+    if not signature or not verify_signature(body, signature, secret):
         raise HTTPException(
             status_code=401,
-            detail="Geçersiz veya eksik webhook imzası.",
+            detail="Invalid or missing webhook signature.",
         )
 
     try:
         payload = json.loads(body)
     except Exception:
-        raise HTTPException(status_code=400, detail="Geçersiz JSON payload.")
+        raise HTTPException(status_code=400, detail="Invalid JSON payload.")
 
-    db = _db_yolu()
+    db = _db_path()
     init_db(db)
-    sonuc = handle_jira_webhook(payload, db)
-    return sonuc
+    result = handle_jira_webhook(payload, db)
+    return result
 
 
-@app.get("/integrations/jira/config", tags=["Entegrasyonlar"])
-async def jira_konfig() -> dict:
-    """Jira webhook yapılandırmasını döndür. Team+ planı gerektirir."""
+@app.get("/integrations/jira/config", tags=["Integrations"])
+async def jira_config() -> dict:
+    """Return Jira webhook configuration. Requires Team+ plan."""
     from codedna.plan import is_feature_available
     from codedna.integrations.jira import get_or_create_secret
 
     if not is_feature_available("sprint_health"):
         raise _plan_403(
             "sprint_health",
-            "Bu özellik Team planında mevcut.",
+            "This feature is available on Team plan.",
             "This feature is available on Team plan.",
         )
 
     secret = get_or_create_secret()
     return {
-        "webhook_url": f"{_repo_yolu().name}/api/integrations/jira/webhook",
-        "secret_mevcut": bool(secret),
-        "secret_uzunluk": len(secret),
-        "desteklenen_eventler": ["sprint_started", "sprint_closed"],
+        "webhook_url": f"{_repo_path().name}/api/integrations/jira/webhook",
+        "secret_exists": bool(secret),
+        "secret_length": len(secret),
+        "supported_events": ["sprint_started", "sprint_closed"],
     }
 
 
-@app.post("/integrations/jira/rotate-secret", tags=["Entegrasyonlar"])
-async def jira_secret_yenile() -> dict:
-    """Webhook secret'ı yenile. Team+ planı gerektirir."""
+@app.post("/integrations/jira/rotate-secret", tags=["Integrations"])
+async def jira_rotate_secret() -> dict:
+    """Rotate webhook secret. Requires Team+ plan."""
     from codedna.plan import is_feature_available
     from codedna.integrations.jira import rotate_secret
 
     if not is_feature_available("sprint_health"):
         raise _plan_403(
             "sprint_health",
-            "Bu özellik Team planında mevcut.",
+            "This feature is available on Team plan.",
             "This feature is available on Team plan.",
         )
 
-    yeni = rotate_secret()
+    new_secret = rotate_secret()
     return {
-        "mesaj": "Webhook secret yenilendi.",
-        "secret": yeni,
+        "message": "Webhook secret rotated.",
+        "secret": new_secret,
     }
 
 
 # ---------------------------------------------------------------------------
-# Yardımcı fonksiyonlar (sprint için)
+# Helper functions (for sprint)
 # ---------------------------------------------------------------------------
 
-def _sprint_durumu(skor: Optional[float]) -> str:
-    """Skor değerine göre durum etiketi döndür."""
-    if skor is None:
-        return "BİLİNMİYOR"
-    if skor >= 80:
-        return "SAĞLIKLI"
-    elif skor >= 50:
-        return "DİKKAT"
-    return "RİSKLİ"
+def _sprint_status(score: Optional[float]) -> str:
+    """Return status label based on score."""
+    if score is None:
+        return "UNKNOWN"
+    if score >= 80:
+        return "HEALTHY"
+    elif score >= 50:
+        return "WARNING"
+    return "RISKY"
 
 
 def _ts_to_str(ts: Optional[int]) -> Optional[str]:
-    """Unix timestamp'i okunabilir tarih string'ine çevir."""
+    """Convert Unix timestamp to a readable date string."""
     if not ts:
         return None
     return datetime.fromtimestamp(ts).strftime("%Y-%m-%d")
 
 
 # ---------------------------------------------------------------------------
-# AI Araç Karşılaştırma endpoint'i
+# AI Tool Comparison endpoint
 # ---------------------------------------------------------------------------
 
-@app.get("/ai-compare", tags=["AI Karşılaştırma"])
-async def ai_arac_karsilastir() -> dict:
-    """
-    Repo genelinde AI araç bazlı karşılaştırma.
-    Enterprise planı gerektirir.
-    """
+@app.get("/ai-compare", tags=["AI Comparison"])
+async def ai_tool_compare() -> dict:
+    """Repo-wide AI tool comparison. Requires Enterprise plan."""
     from codedna.plan import is_feature_available
     from codedna.ai_fingerprint import compare_tools_in_repo
 
     if not is_feature_available("ai_comparison"):
         raise _plan_403(
             "ai_comparison",
-            "Bu özellik Enterprise planında mevcut.",
+            "This feature is available on Enterprise plan.",
             "This feature is available on Enterprise plan.",
         )
 
-    kok = _repo_yolu()
-    db = _db_yolu()
+    root = _repo_path()
+    db = _db_path()
     init_db(db)
-
-    sonuclar = compare_tools_in_repo(kok, db)
-
+    results = compare_tools_in_repo(root, db)
     return {
-        "uyari": (
-            "Bu tespit örüntü tabanlı bir tahmindir — kesin değildir. "
-            "This detection is pattern-based estimation — not definitive."
-        ),
-        "araclar": sonuclar,
-        "toplam_dosya": sum(
-            v.get("dosya_sayisi", 0) for v in sonuclar.values()
-        ),
+        "warning": "This detection is pattern-based estimation — not definitive.",
+        "tools": results,
+        "total_files": sum(v.get("file_count", 0) for v in results.values()),
     }
 
 
 # ---------------------------------------------------------------------------
-# Onboarding endpoint'leri
+# Onboarding endpoints
 # ---------------------------------------------------------------------------
 
 @app.get("/onboarding/team", tags=["Onboarding"])
-async def onboarding_takim_ozeti() -> dict:
-    """Takımdaki tüm yazarların ramp-up özeti. Team+ planı gerektirir."""
+async def onboarding_team_summary() -> dict:
+    """Ramp-up summary for all team authors. Requires Team+ plan."""
     from codedna.plan import is_feature_available
     from codedna.onboarding import team_onboarding_summary
 
     if not is_feature_available("sprint_health"):
-        raise _plan_403(
-            "sprint_health",
-            "Bu özellik Team planında mevcut.",
-            "This feature is available on Team plan.",
-        )
+        raise _plan_403("sprint_health", "This feature is available on Team plan.", "This feature is available on Team plan.")
 
-    db = _db_yolu()
+    db = _db_path()
     init_db(db)
-
-    ozet = team_onboarding_summary(db)
-    return {
-        "toplam_yazar": len(ozet),
-        "yazarlar": ozet,
-    }
+    summary = team_onboarding_summary(db)
+    return {"total_authors": len(summary), "authors": summary}
 
 
 @app.get("/onboarding/{author}", tags=["Onboarding"])
-async def onboarding_yazar_egrisi(author: str) -> dict:
-    """Tek yazar için onboarding zaman çizelgesi. Team+ planı gerektirir."""
+async def onboarding_author_curve(author: str) -> dict:
+    """Onboarding timeline for a single author. Requires Team+ plan."""
     from codedna.plan import is_feature_available
     from codedna.onboarding import get_author_curve
 
     if not is_feature_available("sprint_health"):
-        raise _plan_403(
-            "sprint_health",
-            "Bu özellik Team planında mevcut.",
-            "This feature is available on Team plan.",
-        )
+        raise _plan_403("sprint_health", "This feature is available on Team plan.", "This feature is available on Team plan.")
 
-    db = _db_yolu()
+    db = _db_path()
     init_db(db)
+    curve = get_author_curve(author, db)
 
-    egri = get_author_curve(author, db)
-
-    if egri.toplam_commit == 0:
-        raise HTTPException(
-            status_code=404,
-            detail=f"'{author}' yazarına ait commit bulunamadı.",
-        )
+    if curve.total_commits == 0:
+        raise HTTPException(status_code=404, detail=f"No commits found for author '{author}'.")
 
     return {
-        "yazar": egri.yazar,
-        "toplam_commit": egri.toplam_commit,
-        "anlama_skoru_olan": egri.anlama_skoru_olan,
-        "ramp_up_hafta": egri.ramp_up_hafta,
-        "son_ort_anlama": egri.son_ort_anlama,
-        "yeterli_veri": egri.anlama_skoru_olan >= 5,
-        "noktalar": [
+        "author": curve.author,
+        "total_commits": curve.total_commits,
+        "commits_with_understanding": curve.commits_with_understanding,
+        "ramp_up_weeks": curve.ramp_up_weeks,
+        "latest_avg_understanding": curve.latest_avg_understanding,
+        "sufficient_data": curve.commits_with_understanding >= 5,
+        "data_points": [
             {
-                "commit_no": n.commit_no,
-                "hafta_no": n.hafta_no,
-                "tarih": n.tarih.strftime("%Y-%m-%d"),
+                "commit_number": n.commit_no,
+                "week_number": n.week_number,
+                "date": n.date.strftime("%Y-%m-%d"),
                 "understanding_score": n.understanding_score,
             }
-            for n in egri.noktalar
+            for n in curve.points
         ],
     }
 
 
 # ---------------------------------------------------------------------------
-# Korumalı Modül endpoint'leri
+# Protected Module endpoints
 # ---------------------------------------------------------------------------
 
-class ProtectedModulGirdi(BaseModel):
-    """Korumalı modül ekleme giriş verisi."""
-    dosya_yolu: str
-    esik: float = 3.5
-    etiket: str = ""
-    ekleyen: str = "api"
+class ProtectedModuleInput(BaseModel):
+    """Protected module creation input data."""
+    file_path: str
+    threshold: float = 3.5
+    label: str = ""
+    added_by: str = "api"
 
 
-@app.post("/protected-modules", tags=["Korumalı Modüller"])
-async def korunali_modul_ekle(girdi: ProtectedModulGirdi) -> dict:
-    """Yeni korumalı modül ekle. Team+ planı gerektirir."""
+@app.post("/protected-modules", tags=["Protected Modules"])
+async def add_protected_module(data: ProtectedModuleInput) -> dict:
+    """Add a new protected module. Requires Team+ plan."""
     from codedna.plan import is_feature_available
     from codedna.protection import protect_module
 
     if not is_feature_available("bus_factor"):
-        raise _plan_403("bus_factor", "Bu özellik Team planında mevcut.", "This feature is available on Team plan.")
+        raise _plan_403("bus_factor", "This feature is available on Team plan.", "This feature is available on Team plan.")
+    if not (1.0 <= data.threshold <= 5.0):
+        raise HTTPException(status_code=422, detail="Threshold must be between 1.0 and 5.0.")
 
-    if not (1.0 <= girdi.esik <= 5.0):
-        raise HTTPException(status_code=422, detail="Eşik 1.0–5.0 arasında olmalı.")
-
-    db = _db_yolu()
+    db = _db_path()
     init_db(db)
-    kayit_id = protect_module(
-        girdi.dosya_yolu, girdi.esik,
-        girdi.etiket or girdi.dosya_yolu, girdi.ekleyen, db,
-    )
-    return {"id": kayit_id, "dosya_yolu": girdi.dosya_yolu, "mesaj": "Korumalı modül eklendi."}
+    record_id = protect_module(data.file_path, data.threshold, data.label or data.file_path, data.added_by, db)
+    return {"id": record_id, "file_path": data.file_path, "message": "Protected module added."}
 
 
-@app.get("/protected-modules", tags=["Korumalı Modüller"])
-async def korunali_modul_listesi() -> dict:
-    """Tüm korumalı modülleri ve durumlarını döndür. Team+ planı gerektirir."""
+@app.get("/protected-modules", tags=["Protected Modules"])
+async def list_protected_modules() -> dict:
+    """Return all protected modules and statuses. Requires Team+ plan."""
     from codedna.plan import is_feature_available
     from codedna.protection import check_protected_modules
 
     if not is_feature_available("bus_factor"):
-        raise _plan_403("bus_factor", "Bu özellik Team planında mevcut.", "This feature is available on Team plan.")
+        raise _plan_403("bus_factor", "This feature is available on Team plan.", "This feature is available on Team plan.")
 
-    db = _db_yolu()
+    db = _db_path()
     init_db(db)
-    moduller = check_protected_modules(db)
-
+    modules = check_protected_modules(db)
     return {
-        "toplam": len(moduller),
-        "ihlal_sayisi": sum(1 for m in moduller if m.durum == "İHLAL"),
-        "moduller": [
-            {
-                "dosya_yolu": m.dosya_yolu,
-                "etiket": m.etiket,
-                "esik": m.esik,
-                "mevcut_skor": m.mevcut_skor,
-                "durum": m.durum,
-            }
-            for m in moduller
+        "total": len(modules),
+        "violation_count": sum(1 for m in modules if m.status == "VIOLATION"),
+        "modules": [
+            {"file_path": m.file_path, "label": m.label, "threshold": m.threshold,
+             "current_score": m.current_score, "status": m.status}
+            for m in modules
         ],
     }
 
 
-@app.delete("/protected-modules/{file_path:path}", tags=["Korumalı Modüller"])
-async def korunali_modul_kaldir(file_path: str) -> dict:
-    """Korumalı modülü kaldır. Team+ planı gerektirir."""
+@app.delete("/protected-modules/{file_path:path}", tags=["Protected Modules"])
+async def remove_protected_module(file_path: str) -> dict:
+    """Remove a protected module. Requires Team+ plan."""
     from codedna.plan import is_feature_available
     from codedna.protection import unprotect_module
 
     if not is_feature_available("bus_factor"):
-        raise _plan_403("bus_factor", "Bu özellik Team planında mevcut.", "This feature is available on Team plan.")
+        raise _plan_403("bus_factor", "This feature is available on Team plan.", "This feature is available on Team plan.")
 
-    db = _db_yolu()
+    db = _db_path()
     if unprotect_module(file_path, db):
-        return {"mesaj": "Koruma kaldırıldı.", "dosya_yolu": file_path}
-    raise HTTPException(status_code=404, detail="Korumalı modül bulunamadı.")
+        return {"message": "Protection removed.", "file_path": file_path}
+    raise HTTPException(status_code=404, detail="Protected module not found.")
 
 
-@app.get("/protected-modules/violations", tags=["Korumalı Modüller"])
-async def korunali_modul_ihlalleri() -> dict:
-    """Sadece ihlaldeki korumalı modülleri döndür. Team+ planı gerektirir."""
+@app.get("/protected-modules/violations", tags=["Protected Modules"])
+async def protected_module_violations() -> dict:
+    """Return only protected modules in violation. Requires Team+ plan."""
     from codedna.plan import is_feature_available
     from codedna.protection import get_violations
 
     if not is_feature_available("bus_factor"):
-        raise _plan_403("bus_factor", "Bu özellik Team planında mevcut.", "This feature is available on Team plan.")
+        raise _plan_403("bus_factor", "This feature is available on Team plan.", "This feature is available on Team plan.")
 
-    db = _db_yolu()
+    db = _db_path()
     init_db(db)
-    ihlaller = get_violations(db)
-
+    violations = get_violations(db)
     return {
-        "ihlal_sayisi": len(ihlaller),
-        "ihlaller": [
-            {"dosya_yolu": m.dosya_yolu, "etiket": m.etiket,
-             "esik": m.esik, "mevcut_skor": m.mevcut_skor}
-            for m in ihlaller
+        "violation_count": len(violations),
+        "violations": [
+            {"file_path": m.file_path, "label": m.label, "threshold": m.threshold, "current_score": m.current_score}
+            for m in violations
         ],
     }
 
 
 # ---------------------------------------------------------------------------
-# Mülakat endpoint'leri
+# Interview endpoints
 # ---------------------------------------------------------------------------
 
-class MulakatBaslatGirdi(BaseModel):
-    """Mülakat başlatma giriş verisi."""
+class InterviewStartInput(BaseModel):
+    """Interview session start input data."""
     candidate_name: str
     difficulty: str = "medium"
 
 
-@app.post("/interview/start", tags=["Mülakat"])
-async def mulakat_baslat(girdi: MulakatBaslatGirdi) -> dict:
-    """Yeni mülakat oturumu başlat. Enterprise planı gerektirir."""
+@app.post("/interview/start", tags=["Interview"])
+async def start_interview(data: InterviewStartInput) -> dict:
+    """Start a new interview session. Requires Enterprise plan."""
     from codedna.plan import is_feature_available
     from codedna.interview import select_candidate_file, generate_questions, start_session
 
     if not is_feature_available("interview_tool"):
-        raise _plan_403("interview_tool", "Bu özellik Enterprise planında mevcut.", "This feature is available on Enterprise plan.")
+        raise _plan_403("interview_tool", "This feature is available on Enterprise plan.", "This feature is available on Enterprise plan.")
+    if data.difficulty not in ("easy", "medium", "hard"):
+        raise HTTPException(status_code=422, detail="Difficulty must be: easy | medium | hard")
 
-    if girdi.difficulty not in ("easy", "medium", "hard"):
-        raise HTTPException(status_code=422, detail="Zorluk: easy | medium | hard")
-
-    kok = _repo_yolu()
-    db = _db_yolu()
+    root = _repo_path()
+    db = _db_path()
     init_db(db)
+    candidate_file = select_candidate_file(root, db, data.difficulty)
+    if not candidate_file:
+        raise HTTPException(status_code=404, detail=f"No suitable file found for difficulty '{data.difficulty}'.")
 
-    dosya = select_candidate_file(kok, db, girdi.difficulty)
-    if not dosya:
-        raise HTTPException(status_code=404, detail=f"'{girdi.difficulty}' zorluğunda uygun dosya bulunamadı.")
-
-    sorular = generate_questions(dosya.anonimlestirilmis_kod)
-    session_id = start_session(girdi.candidate_name, dosya.dosya_yolu, sorular, db)
-
+    questions = generate_questions(candidate_file.anonymized_code)
+    session_id = start_session(data.candidate_name, candidate_file.file_path, questions, db)
     return {
         "session_id": session_id,
-        "aday": girdi.candidate_name,
-        "zorluk": girdi.difficulty,
-        "karmasiklik": dosya.karmasiklik_skoru,
-        "satir_sayisi": dosya.satir_sayisi,
-        "anonimlestirilmis_kod": dosya.anonimlestirilmis_kod,
-        "sorular": sorular,
-        "uyari": "Bu araç insan değerlendirmesinin yerine geçmez. This tool should not be used as the sole hiring decision factor.",
+        "candidate": data.candidate_name,
+        "difficulty": data.difficulty,
+        "complexity": candidate_file.complexity_score,
+        "line_count": candidate_file.line_count,
+        "anonymized_code": candidate_file.anonymized_code,
+        "questions": questions,
+        "warning": "This tool should not be used as the sole hiring decision factor.",
     }
 
 
-class PuanGirdi(BaseModel):
-    """Mülakat puanı giriş verisi."""
+class ScoreInput(BaseModel):
+    """Interview score input data."""
     score: float
     evaluator_notes: str = ""
 
 
-@app.post("/interview/{session_id}/score", tags=["Mülakat"])
-async def mulakat_puan_kaydet(session_id: int, girdi: PuanGirdi) -> dict:
-    """İnsan değerlendirici puanını kaydet. Enterprise planı gerektirir."""
+@app.post("/interview/{session_id}/score", tags=["Interview"])
+async def save_interview_score(session_id: int, data: ScoreInput) -> dict:
+    """Save human evaluator score. Requires Enterprise plan."""
     from codedna.plan import is_feature_available
     from codedna.interview import submit_score
 
     if not is_feature_available("interview_tool"):
-        raise _plan_403("interview_tool", "Bu özellik Enterprise planında mevcut.", "This feature is available on Enterprise plan.")
+        raise _plan_403("interview_tool", "This feature is available on Enterprise plan.", "This feature is available on Enterprise plan.")
 
-    db = _db_yolu()
+    db = _db_path()
     try:
-        return submit_score(session_id, girdi.score, girdi.evaluator_notes, db)
+        return submit_score(session_id, data.score, data.evaluator_notes, db)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
 
 
-@app.get("/interview/sessions", tags=["Mülakat"])
-async def mulakat_oturumlari(
-    limit: int = Query(20, ge=1, le=100),
-) -> dict:
-    """Geçmiş mülakat oturumlarını döndür. Enterprise planı gerektirir."""
+@app.get("/interview/sessions", tags=["Interview"])
+async def interview_sessions(limit: int = Query(20, ge=1, le=100)) -> dict:
+    """Return past interview sessions. Requires Enterprise plan."""
     from codedna.plan import is_feature_available
     from codedna.interview import get_sessions
 
     if not is_feature_available("interview_tool"):
-        raise _plan_403("interview_tool", "Bu özellik Enterprise planında mevcut.", "This feature is available on Enterprise plan.")
+        raise _plan_403("interview_tool", "This feature is available on Enterprise plan.", "This feature is available on Enterprise plan.")
 
-    db = _db_yolu()
+    db = _db_path()
     init_db(db)
-    return {"oturumlar": get_sessions(db, limit=limit)}
+    return {"sessions": get_sessions(db, limit=limit)}
 
 
 # ---------------------------------------------------------------------------
-# Auth endpoint'leri
+# Auth endpoints
 # ---------------------------------------------------------------------------
 
-def _auth_db_yolu() -> Path:
-    """Auth veritabanı yolunu döndür."""
+def _auth_db_path() -> Path:
+    """Return auth database path."""
     import os
     env = os.environ.get("CODEDNA_AUTH_DB_PATH")
     return Path(env).resolve() if env else Path.home() / ".codedna" / "auth.db"
 
 
-def _token_al(request: Request) -> Optional[str]:
-    """Authorization: Bearer <token> header'ından token'ı ayıkla."""
+def _extract_token(request: Request) -> Optional[str]:
+    """Extract token from Authorization: Bearer <token> header."""
     auth = request.headers.get("Authorization", "")
     if auth.startswith("Bearer "):
         return auth[7:].strip()
     return None
 
 
-class AuthKayitGirdi(BaseModel):
-    """Kayıt giriş verisi."""
+class RegisterInput(BaseModel):
+    """Registration input data."""
     email: str
     password: str
 
 
-class AuthGirisGirdi(BaseModel):
-    """Giriş giriş verisi."""
+class LoginInput(BaseModel):
+    """Login input data."""
     email: str
     password: str
 
 
 @app.post("/auth/register", tags=["Auth"])
-async def auth_kayit(girdi: AuthKayitGirdi) -> dict:
-    """Yeni kullanıcı kaydı."""
+async def auth_register(data: RegisterInput) -> dict:
+    """Register a new user."""
     from codedna.auth import register_user, init_auth_db
 
-    db = _auth_db_yolu()
+    db = _auth_db_path()
     init_auth_db(db)
-
     try:
-        sonuc = register_user(girdi.email, girdi.password, db)
+        result = register_user(data.email, data.password, db)
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
-
-    return {
-        "user_id": sonuc["user_id"],
-        "token": sonuc["token"],
-        "plan": sonuc["plan"],
-        "mesaj": "Kayıt başarılı.",
-    }
+    return {"user_id": result["user_id"], "token": result["token"], "plan": result["plan"], "message": "Registration successful."}
 
 
 @app.post("/auth/login", tags=["Auth"])
-async def auth_giris(girdi: AuthGirisGirdi, request: Request) -> dict:
-    """
-    Giriş yap ve JWT token döndür.
-    Rate limiting: IP bazlı VE e-posta bazlı — ikisi de 5 dk'da 5 deneme / 60s kilit.
-    Botnet/proxy rotasyonuna karşı e-posta anahtarı eklendi.
-    """
+async def auth_login(data: LoginInput, request: Request) -> dict:
+    """Log in and return a JWT token. Rate limited by IP and email."""
     from codedna.auth import login_user, init_auth_db
     from codedna.rate_limit import login_limiter
 
-    db = _auth_db_yolu()
+    db = _auth_db_path()
     init_auth_db(db)
-
     ip = request.client.host if request.client else "unknown"
-    # "email:" öneki, e-posta anahtarının IP ile çakışmasını önler
-    email_anahtari = f"email:{girdi.email.strip().lower()}"
+    email_key = f"email:{data.email.strip().lower()}"
 
-    # IP bazlı VE e-posta bazlı kontrol — ikisi de geçmeli
-    for anahtar in (ip, email_anahtari):
-        izin_var, kalan = login_limiter.kontrol_et(anahtar)
-        if not izin_var:
-            raise HTTPException(
-                status_code=429,
-                detail=f"Çok fazla başarısız deneme. {kalan} saniye bekleyin.",
-            )
+    for key in (ip, email_key):
+        allowed, remaining = login_limiter.kontrol_et(key)
+        if not allowed:
+            raise HTTPException(status_code=429, detail=f"Too many failed attempts. Please wait {remaining} seconds.")
 
     try:
-        sonuc = login_user(girdi.email, girdi.password, db)
-        # Başarılı girişte her iki anahtarı da sıfırla
+        result = login_user(data.email, data.password, db)
         login_limiter.basarili_kaydet(ip)
-        login_limiter.basarili_kaydet(email_anahtari)
+        login_limiter.basarili_kaydet(email_key)
     except ValueError:
-        # Her iki anahtarı da say
         login_limiter.basarisiz_kaydet(ip)
-        login_limiter.basarisiz_kaydet(email_anahtari)
-        raise HTTPException(status_code=401, detail="E-posta veya şifre hatalı.")
+        login_limiter.basarisiz_kaydet(email_key)
+        raise HTTPException(status_code=401, detail="Invalid email or password.")
 
-    return {
-        "user_id": sonuc["user_id"],
-        "token": sonuc["token"],
-        "plan": sonuc["plan"],
-        "subscription_status": sonuc["subscription_status"],
-    }
+    return {"user_id": result["user_id"], "token": result["token"], "plan": result["plan"], "subscription_status": result["subscription_status"]}
 
 
 @app.post("/auth/logout", tags=["Auth"])
-async def auth_cikis(request: Request) -> dict:
-    """Oturumu sonlandır."""
+async def auth_logout(request: Request) -> dict:
+    """End the session."""
     from codedna.auth import logout_user
 
-    token = _token_al(request)
+    token = _extract_token(request)
     if not token:
-        raise HTTPException(status_code=401, detail="Token gerekli.")
-
-    db = _auth_db_yolu()
+        raise HTTPException(status_code=401, detail="Token required.")
+    db = _auth_db_path()
     logout_user(token, db)
-    return {"mesaj": "Çıkış başarılı."}
+    return {"message": "Logged out successfully."}
 
 
 @app.get("/auth/me", tags=["Auth"])
-async def auth_ben(request: Request) -> dict:
-    """Mevcut kullanıcı bilgisini döndür."""
+async def auth_me(request: Request) -> dict:
+    """Return current user information."""
     from codedna.auth import verify_token, get_user_by_id
 
-    token = _token_al(request)
+    token = _extract_token(request)
     if not token:
-        raise HTTPException(status_code=401, detail="Token gerekli.")
-
-    db = _auth_db_yolu()
-    kullanici = verify_token(token, db)
-    if not kullanici:
-        raise HTTPException(status_code=401, detail="Geçersiz veya süresi dolmuş token.")
-
-    detay = get_user_by_id(kullanici["user_id"], db)
-    if not detay:
-        raise HTTPException(status_code=404, detail="Kullanıcı bulunamadı.")
-
-    return {
-        "user_id": detay["id"],
-        "email": detay["email"],
-        "plan": detay["plan"],
-        "subscription_status": detay["subscription_status"],
-    }
+        raise HTTPException(status_code=401, detail="Token required.")
+    db = _auth_db_path()
+    user = verify_token(token, db)
+    if not user:
+        raise HTTPException(status_code=401, detail="Invalid or expired token.")
+    detail = get_user_by_id(user["user_id"], db)
+    if not detail:
+        raise HTTPException(status_code=404, detail="User not found.")
+    return {"user_id": detail["id"], "email": detail["email"], "plan": detail["plan"], "subscription_status": detail["subscription_status"]}
 
 
 # ---------------------------------------------------------------------------
-# Billing endpoint'leri
+# Billing endpoints
 # ---------------------------------------------------------------------------
 
-class CheckoutGirdi(BaseModel):
-    """Checkout isteği giriş verisi."""
+class CheckoutInput(BaseModel):
+    """Checkout request input data."""
     plan: str  # "pro" | "team" | "enterprise"
 
 
 @app.post("/billing/checkout", tags=["Billing"])
-async def billing_checkout(girdi: CheckoutGirdi, request: Request) -> dict:
-    """
-    Lemon Squeezy checkout URL'i oluştur.
-    Authorization header gerektirir.
-    """
+async def billing_checkout(data: CheckoutInput, request: Request) -> dict:
+    """Create a Lemon Squeezy checkout URL. Requires Authorization header."""
     from codedna.auth import verify_token
     from codedna.integrations.lemonsqueezy import create_checkout_url
 
-    token = _token_al(request)
+    token = _extract_token(request)
     if not token:
-        raise HTTPException(status_code=401, detail="Token gerekli.")
-
-    db = _auth_db_yolu()
-    kullanici = verify_token(token, db)
-    if not kullanici:
-        raise HTTPException(status_code=401, detail="Geçersiz token.")
-
-    if girdi.plan not in ("pro", "team", "enterprise"):
-        raise HTTPException(status_code=422, detail="Geçersiz plan: pro | team | enterprise")
+        raise HTTPException(status_code=401, detail="Token required.")
+    db = _auth_db_path()
+    user = verify_token(token, db)
+    if not user:
+        raise HTTPException(status_code=401, detail="Invalid token.")
+    if data.plan not in ("pro", "team", "enterprise"):
+        raise HTTPException(status_code=422, detail="Invalid plan: pro | team | enterprise")
 
     try:
-        checkout_url = create_checkout_url(girdi.plan, kullanici["email"], kullanici["user_id"])
+        checkout_url = create_checkout_url(data.plan, user["email"], user["user_id"])
     except ValueError as e:
         raise HTTPException(status_code=503, detail=str(e))
     except RuntimeError as e:
         raise HTTPException(status_code=502, detail=str(e))
-
-    return {"checkout_url": checkout_url, "plan": girdi.plan}
+    return {"checkout_url": checkout_url, "plan": data.plan}
 
 
 @app.post("/billing/webhook", tags=["Billing"])
 async def billing_webhook(request: Request) -> dict:
-    """
-    Lemon Squeezy'den gelen abonelik event'lerini al ve işle.
-    İmza ZORUNLU — imzasız veya geçersiz imzalı istek her zaman 401.
-    """
-    from codedna.integrations.lemonsqueezy import (
-        verify_webhook_signature,
-        handle_subscription_webhook,
-    )
+    """Receive and process subscription events from Lemon Squeezy. Signature is REQUIRED."""
+    from codedna.integrations.lemonsqueezy import verify_webhook_signature, handle_subscription_webhook
 
     body = await request.body()
-    imza = request.headers.get("X-Signature", "")
-
-    # İmza ZORUNLU — boşsa veya geçersizse reddet (Faz 6/7 deseniyle tutarlı)
-    if not imza or not verify_webhook_signature(body, imza):
-        raise HTTPException(status_code=401, detail="Geçersiz veya eksik webhook imzası.")
+    signature = request.headers.get("X-Signature", "")
+    if not signature or not verify_webhook_signature(body, signature):
+        raise HTTPException(status_code=401, detail="Invalid or missing webhook signature.")
 
     try:
         payload = json.loads(body)
     except Exception:
-        raise HTTPException(status_code=400, detail="Geçersiz JSON payload.")
+        raise HTTPException(status_code=400, detail="Invalid JSON payload.")
 
-    db = _auth_db_yolu()
-    sonuc = handle_subscription_webhook(payload, db)
-    return sonuc
+    db = _auth_db_path()
+    result = handle_subscription_webhook(payload, db)
+    return result
 
 
 @app.get("/billing/subscription", tags=["Billing"])
-async def billing_abonelik(request: Request) -> dict:
-    """Mevcut kullanıcının abonelik durumunu döndür."""
+async def billing_subscription(request: Request) -> dict:
+    """Return the current user's subscription status."""
     from codedna.auth import verify_token, get_user_by_id
 
-    token = _token_al(request)
+    token = _extract_token(request)
     if not token:
-        raise HTTPException(status_code=401, detail="Token gerekli.")
-
-    db = _auth_db_yolu()
-    kullanici = verify_token(token, db)
-    if not kullanici:
-        raise HTTPException(status_code=401, detail="Geçersiz token.")
-
-    detay = get_user_by_id(kullanici["user_id"], db)
-    if not detay:
-        raise HTTPException(status_code=404, detail="Kullanıcı bulunamadı.")
-
-    return {
-        "plan": detay["plan"],
-        "subscription_status": detay["subscription_status"],
-        "lemonsqueezy_customer_id": detay["lemonsqueezy_customer_id"],
-    }
+        raise HTTPException(status_code=401, detail="Token required.")
+    db = _auth_db_path()
+    user = verify_token(token, db)
+    if not user:
+        raise HTTPException(status_code=401, detail="Invalid token.")
+    detail = get_user_by_id(user["user_id"], db)
+    if not detail:
+        raise HTTPException(status_code=404, detail="User not found.")
+    return {"plan": detail["plan"], "subscription_status": detail["subscription_status"], "lemonsqueezy_customer_id": detail["lemonsqueezy_customer_id"]}

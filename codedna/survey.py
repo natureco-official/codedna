@@ -1,4 +1,4 @@
-"""Commit anlama anketi modülü."""
+"""Commit understanding survey module."""
 
 from typing import Optional
 
@@ -10,78 +10,95 @@ from rich.text import Text
 console = Console()
 
 
-def _skor_al(soru: str, soru_no: int) -> Optional[int]:
+def _get_score(question: str, question_no: int) -> Optional[int]:
     """
-    1-5 arasında geçerli bir skor al.
-    Boş bırakılırsa None döner (anket atlandı).
+    Get a valid score between 1 and 5.
+
+    Return values:
+      - int (1-5) : user entered a score
+      - None      : user intentionally skipped (0 or Enter),
+                    or stdin could not be read (EOFError — environment issue)
+
+    EOFError and KeyboardInterrupt are caught separately:
+      - KeyboardInterrupt → silently return None (user pressed Ctrl+C)
+      - EOFError          → print warning + return None (stdin not connected)
     """
     try:
-        deger = IntPrompt.ask(
-            f"  [bold cyan]{soru_no}.[/bold cyan] {soru} [dim]\\[1-5][/dim]",
+        value = IntPrompt.ask(
+            f"  [bold cyan]{question_no}.[/bold cyan] {question} [dim]\\[1-5][/dim]",
             default=0,
         )
-        if deger == 0:
+        if value == 0:
             return None
-        return max(1, min(5, deger))
-    except (KeyboardInterrupt, EOFError):
+        return max(1, min(5, value))
+    except KeyboardInterrupt:
+        # User intentionally cancelled — silent
+        return None
+    except EOFError:
+        # stdin could not be read — not an intentional user choice.
+        # Show an informative warning instead of silently swallowing.
+        console.print(
+            "  [dim red]⚠ Could not read terminal input for survey "
+            "(stdin not connected). Skipping survey.[/dim red]"
+        )
         return None
 
 
 def run_survey(commit_hash: str) -> Optional[float]:
     """
-    Post-commit hook sonrası 3 soruluk anlama anketi çalıştır.
+    Run a 3-question understanding survey after a post-commit hook.
 
     Args:
-        commit_hash: Anketin bağlandığı commit hash'i
+        commit_hash: The commit hash this survey is linked to
 
     Returns:
-        Ortalama anlama skoru (1.0-5.0), kullanıcı atlarsa None
+        Average understanding score (1.0-5.0), or None if user skipped
     """
     console.print()
     console.print(
         Panel(
             Text.from_markup(
-                f"[bold yellow]CodeDNA[/bold yellow] — Commit [dim]{commit_hash[:8]}[/dim] için hızlı anlama anketi\n"
-                "[dim]Enter ile atlayabilirsin (0 = atla)[/dim]"
+                f"[bold yellow]CodeDNA[/bold yellow] — Quick understanding survey for commit [dim]{commit_hash[:8]}[/dim]\n"
+                "[dim]Press Enter to skip (0 = skip)[/dim]"
             ),
             border_style="yellow",
             padding=(0, 2),
         )
     )
 
-    sorular = [
-        "Bu değişikliği 3 ay sonra açıklayabilir misin?",
-        "Bir hata çıksa debug edebilir misin?",
-        "Başkası sorsa, nasıl çalıştığını anlatabilir misin?",
+    questions = [
+        "Could you explain this change 3 months from now?",
+        "Could you debug it if a bug appeared?",
+        "Could you explain how it works to someone else?",
     ]
 
-    skorlar: list[int] = []
-    for i, soru in enumerate(sorular, start=1):
-        skor = _skor_al(soru, i)
-        if skor is None:
-            # Kullanıcı atladı
-            console.print("  [dim]Anket atlandı.[/dim]")
+    scores: list[int] = []
+    for i, question in enumerate(questions, start=1):
+        score = _get_score(question, i)
+        if score is None:
+            # Intentionally skipped or EOFError already printed a warning
+            console.print("  [dim]Survey skipped.[/dim]")
             return None
-        skorlar.append(skor)
+        scores.append(score)
 
-    if not skorlar:
+    if not scores:
         return None
 
-    ortalama = sum(skorlar) / len(skorlar)
+    average = sum(scores) / len(scores)
 
-    # Skora göre renk ve mesaj
-    if ortalama >= 4.0:
-        renk = "green"
-        etiket = "Harika 💪"
-    elif ortalama >= 2.5:
-        renk = "yellow"
-        etiket = "Orta seviye 🤔"
+    # Color and message based on score
+    if average >= 4.0:
+        color = "green"
+        label = "Great 💪"
+    elif average >= 2.5:
+        color = "yellow"
+        label = "Moderate 🤔"
     else:
-        renk = "red"
-        etiket = "Risk var ⚠️"
+        color = "red"
+        label = "At risk ⚠️"
 
     console.print(
-        f"\n  Anlama skoru: [bold {renk}]{ortalama:.1f}/5[/bold {renk}] — {etiket}\n"
+        f"\n  Understanding score: [bold {color}]{average:.1f}/5[/bold {color}] — {label}\n"
     )
 
-    return ortalama
+    return average

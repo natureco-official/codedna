@@ -1,31 +1,31 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { getCommitler, CommitListYanit } from "@/lib/api";
+import { getCommits, CommitListResponse } from "@/lib/api";
 import { CommitTable, CommitTableSkeleton } from "@/components/CommitTable";
-import { HataBanner } from "@/components/HataBanner";
+import { ErrorBanner } from "@/components/ErrorBanner";
 import { useTranslation } from "@/lib/i18n";
 
-export default function CommitlerSayfasi() {
+export default function CommitsPage() {
   const { t } = useTranslation();
   const [limit, setLimit] = useState(20);
-  const [veri, setVeri] = useState<CommitListYanit | null>(null);
-  const [yukleniyor, setYukleniyor] = useState(true);
-  const [hata, setHata] = useState(false);
+  const [data, setData] = useState<CommitListResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
 
   useEffect(() => {
-    setYukleniyor(true);
-    setHata(false);
-    getCommitler(limit)
-      .then(setVeri)
-      .catch(() => setHata(true))
-      .finally(() => setYukleniyor(false));
+    setLoading(true);
+    setError(false);
+    getCommits(limit)
+      .then(setData)
+      .catch(() => setError(true))
+      .finally(() => setLoading(false));
   }, [limit]);
 
-  const anketliCommit = veri?.commitler.filter((c) => c.anlama_skoru != null) ?? [];
-  const ortAnlama =
-    anketliCommit.length > 0
-      ? anketliCommit.reduce((s, c) => s + c.anlama_skoru!, 0) / anketliCommit.length
+  const surveyedCommits = data?.commits.filter((c) => c.understanding_score != null) ?? [];
+  const avgUnderstanding =
+    surveyedCommits.length > 0
+      ? surveyedCommits.reduce((s, c) => s + c.understanding_score!, 0) / surveyedCommits.length
       : null;
 
   return (
@@ -35,30 +35,30 @@ export default function CommitlerSayfasi() {
         <p className="text-gray-500 text-sm mt-1">{t("commits_subtitle")}</p>
       </div>
 
-      {veri && (
+      {data && (
         <div className="grid grid-cols-3 gap-4">
           {[
-            { label: t("commits_total"), value: veri.toplam, renk: "text-cyan-400" },
-            { label: t("commits_surveyed"), value: anketliCommit.length, renk: "text-white" },
+            { label: t("commits_total"), value: data.total, color: "text-cyan-400" },
+            { label: t("commits_surveyed"), value: surveyedCommits.length, color: "text-white" },
             {
               label: t("commits_avg_understanding"),
-              value: ortAnlama != null ? `${ortAnlama.toFixed(1)}/5` : "—",
-              renk: ortAnlama == null
+              value: avgUnderstanding != null ? `${avgUnderstanding.toFixed(1)}/5` : "—",
+              color: avgUnderstanding == null
                 ? "text-gray-600"
-                : ortAnlama >= 4 ? "text-green-400"
-                : ortAnlama >= 2.5 ? "text-yellow-400"
+                : avgUnderstanding >= 4 ? "text-green-400"
+                : avgUnderstanding >= 2.5 ? "text-yellow-400"
                 : "text-red-400",
             },
-          ].map((k) => (
-            <div key={k.label} className="bg-gray-900 border border-gray-800 rounded-xl p-4">
-              <p className="text-xs text-gray-500 uppercase tracking-wider mb-1">{k.label}</p>
-              <p className={`text-2xl font-bold ${k.renk}`}>{k.value}</p>
+          ].map((card) => (
+            <div key={card.label} className="bg-gray-900 border border-gray-800 rounded-xl p-4">
+              <p className="text-xs text-gray-500 uppercase tracking-wider mb-1">{card.label}</p>
+              <p className={`text-2xl font-bold ${card.color}`}>{card.value}</p>
             </div>
           ))}
         </div>
       )}
 
-      {hata && <HataBanner />}
+      {error && <ErrorBanner />}
 
       <div className="bg-gray-900 border border-gray-800 rounded-xl p-6">
         <div className="flex items-center justify-between mb-4">
@@ -78,10 +78,10 @@ export default function CommitlerSayfasi() {
           </select>
         </div>
 
-        {yukleniyor ? (
+        {loading ? (
           <CommitTableSkeleton />
-        ) : veri ? (
-          <CommitTable commitler={veri.commitler} />
+        ) : data ? (
+          <CommitTable commits={data.commits} />
         ) : null}
       </div>
     </div>

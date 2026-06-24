@@ -8,11 +8,11 @@ import { useRouter } from "next/navigation";
 
 export function NavClient() {
   const { t } = useTranslation();
-  const { kullanici, cikis } = useAuth();
+  const { user, signOut } = useAuth();
   const router = useRouter();
 
-  const handleCikis = async () => {
-    await cikis();
+  const handleSignOut = async () => {
+    await signOut();
     router.push("/login");
   };
 
@@ -32,16 +32,16 @@ export function NavClient() {
       <Link href="/pricing" className="text-gray-400 hover:text-cyan-400 transition-colors text-sm font-medium">{t("nav_pricing")}</Link>
       <a href="http://localhost:8000/docs" target="_blank" rel="noopener noreferrer" className="text-gray-600 hover:text-gray-400 transition-colors text-xs">API ↗</a>
 
-      {/* Auth durumu */}
-      {kullanici ? (
+      {/* Auth state */}
+      {user ? (
         <div className="flex items-center gap-3 border-l border-gray-800 pl-4 ml-1">
           <Link href="/billing" className="flex items-center gap-1.5">
-            <span className="text-xs text-gray-500">{kullanici.email.split("@")[0]}</span>
+            <span className="text-xs text-gray-500">{user.email.split("@")[0]}</span>
             <span className="text-xs bg-cyan-500/20 text-cyan-400 px-1.5 py-0.5 rounded font-medium uppercase">
-              {kullanici.plan}
+              {user.plan}
             </span>
           </Link>
-          <button onClick={handleCikis} className="text-xs text-gray-600 hover:text-gray-400 transition-colors">
+          <button onClick={handleSignOut} className="text-xs text-gray-600 hover:text-gray-400 transition-colors">
             {t("auth_logout")}
           </button>
         </div>

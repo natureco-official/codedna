@@ -1,7 +1,8 @@
-"""CodeDNA CLI — typer tabanlı komut satırı arayüzü."""
+"""CodeDNA CLI — typer-based command-line interface."""
 
 from __future__ import annotations
 
+import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -30,17 +31,42 @@ from codedna.survey import run_survey
 
 app = typer.Typer(
     name="codedna",
-    help="🧬 CodeDNA — AI kod şeffaflık aracı",
+    help="🧬 CodeDNA — AI code transparency tool",
     add_completion=False,
     no_args_is_help=True,
 )
 console = Console()
 
 
+def _version_callback(value: bool) -> None:
+    """Callback for the --version flag."""
+    if value:
+        try:
+            from importlib.metadata import version as _v
+            ver = _v("codedna")
+        except Exception:
+            ver = "0.2.29"
+        console.print(f"codedna {ver}")
+        raise typer.Exit()
+
+
+@app.callback()
+def _main_callback(
+    version: bool = typer.Option(
+        False, "--version", "-V",
+        callback=_version_callback,
+        is_eager=True,
+        help="Show version and exit.",
+    ),
+) -> None:
+    """CodeDNA — root callback."""
+    pass
+
+
 def _get_db(repo_path: Optional[Path] = None) -> Path:
-    """Repo'ya özel veritabanı yolunu döndür."""
-    kok = repo_path or find_git_root() or Path.cwd()
-    return get_db_path(kok)
+    """Return the repo-specific database path."""
+    root = repo_path or find_git_root() or Path.cwd()
+    return get_db_path(root)
 
 
 # ---------------------------------------------------------------------------
@@ -48,59 +74,59 @@ def _get_db(repo_path: Optional[Path] = None) -> Path:
 # ---------------------------------------------------------------------------
 @app.command()
 def init(
-    repo: Optional[Path] = typer.Option(None, "--repo", "-r", help="Git repo dizini"),
-    with_ci: bool = typer.Option(False, "--with-ci", help="GitHub Actions CI şablonunu da oluştur"),
+    repo: Optional[Path] = typer.Option(None, "--repo", "-r", help="Git repo directory"),
+    with_ci: bool = typer.Option(False, "--with-ci", help="Also write a GitHub Actions CI template"),
 ) -> None:
-    """Git hook'u kur, veritabanını oluştur ve isteğe bağlı CI şablonu yaz."""
+    """Install the git hook, create the database, and optionally write a CI template."""
     console.print()
     console.print(
         Panel.fit(
-            "[bold cyan]🧬 CodeDNA[/bold cyan] kurulumu başlatılıyor...",
+            "[bold cyan]🧬 CodeDNA[/bold cyan] Setup starting...",
             border_style="cyan",
         )
     )
 
-    # Repo kökünü bul
-    kok = repo or find_git_root()
-    if not kok:
-        console.print("[bold red]Hata:[/bold red] Git repo bulunamadı. Önce 'git init' komutunu çalıştırın.")
+    # Find repo root
+    root = repo or find_git_root()
+    if not root:
+        console.print("[bold red]Error:[/bold red] Git repo not found. Run 'git init' first.")
         raise typer.Exit(1)
 
-    console.print(f"[dim]Repo kökü:[/dim] {kok}")
+    console.print(f"[dim]Repo root:[/dim] {root}")
 
-    # Veritabanını başlat
-    db_yolu = _get_db(kok)
-    init_db(db_yolu)
-    console.print(f"[green]✓[/green] Veritabanı oluşturuldu: [dim]{db_yolu}[/dim]")
+    # Initialize database
+    db_path = _get_db(root)
+    init_db(db_path)
+    console.print(f"[green]✓[/green] Database created: [dim]{db_path}[/dim]")
 
-    # Hook'u kur
-    if is_hook_installed(kok):
-        console.print("[yellow]⚠[/yellow]  Post-commit hook zaten kurulu.")
+    # Install the hook
+    if is_hook_installed(root):
+        console.print("[yellow]⚠[/yellow]  Post-commit hook already installed.")
     else:
-        if install_hook(kok):
-            console.print("[green]✓[/green] Post-commit hook kuruldu.")
+        if install_hook(root):
+            console.print("[green]✓[/green] Post-commit hook installed.")
         else:
-            console.print("[red]✗[/red] Hook kurulumu başarısız.")
+            console.print("[red]✗[/red] Hook installation failed.")
             raise typer.Exit(1)
 
-    # CI şablonu
+    # CI template
     if with_ci:
-        install_ci_workflow(kok)
+        install_ci_workflow(root)
 
-    bilgi = (
-        "[bold green]CodeDNA başarıyla kuruldu![/bold green]\n"
-        "Artık her [bold]git commit[/bold] sonrası otomatik analiz çalışacak.\n\n"
-        "[dim]• Tüm repoyu taramak için:[/dim] [cyan]codedna scan[/cyan]\n"
-        "[dim]• Son commit skorunu görmek için:[/dim] [cyan]codedna status[/cyan]\n"
-        "[dim]• Geçmiş skorları görmek için:[/dim] [cyan]codedna history[/cyan]\n"
-        "[dim]• API sunucuyu başlatmak için:[/dim] [cyan]codedna serve[/cyan]\n"
-        "[dim]• HTML rapor üretmek için:[/dim] [cyan]codedna report[/cyan]"
+    info = (
+        "[bold green]CodeDNA successfully installed![/bold green]\n"
+        "Automatic analysis will run after every [bold]git commit[/bold].\n\n"
+        "[dim]• Scan the full repo:[/dim] [cyan]codedna scan[/cyan]\n"
+        "[dim]• Show latest commit score:[/dim] [cyan]codedna status[/cyan]\n"
+        "[dim]• View score history:[/dim] [cyan]codedna history[/cyan]\n"
+        "[dim]• Start the API server:[/dim] [cyan]codedna serve[/cyan]\n"
+        "[dim]• Generate HTML report:[/dim] [cyan]codedna report[/cyan]"
     )
     if with_ci:
-        bilgi += "\n[dim]• CI şablonu:[/dim] [cyan].github/workflows/codedna.yml[/cyan]"
+        info += "\n[dim]• CI template:[/dim] [cyan].github/workflows/codedna.yml[/cyan]"
 
     console.print()
-    console.print(Panel(bilgi, border_style="green", padding=(1, 2)))
+    console.print(Panel(info, border_style="green", padding=(1, 2)))
 
 
 # ---------------------------------------------------------------------------
@@ -108,87 +134,87 @@ def init(
 # ---------------------------------------------------------------------------
 @app.command()
 def scan(
-    repo: Optional[Path] = typer.Option(None, "--repo", "-r", help="Git repo dizini"),
-    max_files: int = typer.Option(200, "--max", "-m", help="Maksimum taranacak dosya sayısı"),
-    min_risk: float = typer.Option(0.0, "--min-risk", help="Minimum AI olasılığı filtresi (0.0-1.0)"),
+    repo: Optional[Path] = typer.Option(None, "--repo", "-r", help="Git repo directory"),
+    max_files: int = typer.Option(200, "--max", "-m", help="Maximum number of files to scan"),
+    min_risk: float = typer.Option(0.0, "--min-risk", help="Minimum AI probability filter (0.0-1.0)"),
 ) -> None:
-    """Mevcut repo'yu tara ve AI risk raporu göster."""
+    """Scan current repo and show AI risk report."""
     console.print()
-    console.print("[bold cyan]🧬 CodeDNA[/bold cyan] — Repo taranıyor...\n")
+    console.print("[bold cyan]🧬 CodeDNA[/bold cyan] — Scanning repo...\n")
 
-    kok = repo or find_git_root() or Path.cwd()
+    root = repo or find_git_root() or Path.cwd()
 
-    with console.status("[dim]Dosyalar analiz ediliyor...[/dim]"):
-        sonuclar = scan_repository(kok, max_files=max_files)
+    with console.status("[dim]Analyzing files...[/dim]"):
+        results = scan_repository(root, max_files=max_files)
 
-    if not sonuclar:
-        console.print("[yellow]Taranacak desteklenen dosya bulunamadı.[/yellow]")
-        console.print("[dim]Desteklenen: .py .js .jsx .ts .tsx[/dim]")
+    if not results:
+        console.print("[yellow]No supported files found to scan.[/yellow]")
+        console.print("[dim]Supported: .py .js .jsx .ts .tsx[/dim]")
         return
 
-    # Min risk filtresi uygula
+    # Apply min risk filter
     if min_risk > 0:
-        sonuclar = [s for s in sonuclar if s.ai_probability >= min_risk]
+        results = [s for s in results if s.ai_probability >= min_risk]
 
-    # AI olasılığına göre sırala (yüksekten düşüğe)
-    sonuclar.sort(key=lambda s: s.ai_probability, reverse=True)
+    # Sort by AI probability (highest first)
+    results.sort(key=lambda s: s.ai_probability, reverse=True)
 
-    # DB'den tüm dosya anlama skorlarını tek sorguda çek
-    db_yolu = _get_db(kok)
-    anlama_skorlari_map: dict[str, float] = {}
+    # Fetch all file understanding scores in a single query
+    db_path = _get_db(root)
+    understanding_scores_map: dict[str, float] = {}
     try:
-        anlama_skorlari_map = get_all_file_understanding_scores(db_path=db_yolu)
+        understanding_scores_map = get_all_file_understanding_scores(db_path=db_path)
     except Exception:
         pass
 
-    # Tablo oluştur
-    tablo = Table(
+    # Build table
+    table = Table(
         title="",
         border_style="dim",
         show_lines=True,
         header_style="bold",
     )
-    tablo.add_column("Dosya", style="white", min_width=25)
-    tablo.add_column("AI Olasılığı", justify="center", min_width=14)
-    tablo.add_column("Karmaşıklık", justify="center", min_width=12)
-    tablo.add_column("Satır", justify="right", min_width=6)
-    tablo.add_column("Anlama Skoru", justify="center", min_width=14)
+    table.add_column("File", style="white", min_width=25)
+    table.add_column("AI Probability", justify="center", min_width=14)
+    table.add_column("Complexity", justify="center", min_width=12)
+    table.add_column("Lines", justify="right", min_width=6)
+    table.add_column("Understanding", justify="center", min_width=14)
 
-    toplam_ai = 0.0
-    for s in sonuclar:
-        yuzde = int(s.ai_probability * 100)
-        ai_metin = f"{s.ai_color} %{yuzde}"
+    total_ai = 0.0
+    for s in results:
+        percentage = int(s.ai_probability * 100)
+        ai_text = f"{s.ai_color} %{percentage}"
 
-        if s.complexity_label == "Yüksek":
-            karmasiklik = "[red]Yüksek[/red]"
-        elif s.complexity_label == "Orta":
-            karmasiklik = "[yellow]Orta[/yellow]"
+        if s.complexity_label == "High":
+            complexity = "[red]High[/red]"
+        elif s.complexity_label == "Medium":
+            complexity = "[yellow]Medium[/yellow]"
         else:
-            karmasiklik = "[green]Düşük[/green]"
+            complexity = "[green]Low[/green]"
 
-        # DB'den tek sorguda gelen map'ten anlama skorunu oku
-        anlama_skor = anlama_skorlari_map.get(s.file_path)
-        if anlama_skor is not None:
-            renk = "green" if anlama_skor >= 4.0 else "yellow" if anlama_skor >= 2.5 else "red"
-            anlama = f"[{renk}]✅ {anlama_skor:.1f}/5[/{renk}]"
+        # Read understanding score from the single-query map
+        understanding_score = understanding_scores_map.get(s.file_path)
+        if understanding_score is not None:
+            color = "green" if understanding_score >= 4.0 else "yellow" if understanding_score >= 2.5 else "red"
+            understanding = f"[{color}]✅ {understanding_score:.1f}/5[/{color}]"
         else:
-            anlama = "[dim]⚠️  Bilinmiyor[/dim]"
+            understanding = "[dim]⚠️  Unknown[/dim]"
 
-        goreceli = _kisalt_yol(s.file_path, str(kok))
+        rel_path = _shorten_path(s.file_path, str(root))
 
-        tablo.add_row(goreceli, ai_metin, karmasiklik, str(s.total_lines), anlama)
-        toplam_ai += s.ai_probability
+        table.add_row(rel_path, ai_text, complexity, str(s.total_lines), understanding)
+        total_ai += s.ai_probability
 
-    console.print(tablo)
+    console.print(table)
 
-    # Özet satırı
-    ortalama_ai = (toplam_ai / len(sonuclar)) * 100 if sonuclar else 0
-    risk_etiketi, risk_renk = _risk_etiketi(ortalama_ai)
+    # Summary line
+    avg_ai = (total_ai / len(results)) * 100 if results else 0
+    risk_label, risk_color = _risk_label(avg_ai)
 
     console.print(
-        f"\n[bold]Repo Özeti:[/bold] {len(sonuclar)} dosya tarandı · "
-        f"Ortalama AI olasılığı: [bold]%{ortalama_ai:.0f}[/bold] · "
-        f"Risk: [bold {risk_renk}]{risk_etiketi}[/bold {risk_renk}]\n"
+        f"\n[bold]Repo Summary:[/bold] {len(results)} files scanned · "
+        f"Avg. AI probability: [bold]{avg_ai:.0f}[/bold] · "
+        f"Risk: [bold {risk_color}]{risk_label}[/bold {risk_color}]\n"
     )
 
 
@@ -197,104 +223,104 @@ def scan(
 # ---------------------------------------------------------------------------
 @app.command()
 def status(
-    repo: Optional[Path] = typer.Option(None, "--repo", "-r", help="Git repo dizini"),
-    hook: bool = typer.Option(False, "--hook", hidden=True, help="Hook modunda çalış (anket sor)"),
+    repo: Optional[Path] = typer.Option(None, "--repo", "-r", help="Git repo directory"),
+    hook: bool = typer.Option(False, "--hook", hidden=True, help="Run in hook mode (ask survey)"),
 ) -> None:
-    """Son commit'in skorunu göster (ve hook modunda anket sor)."""
+    """Show last commit score (and ask survey in hook mode)."""
     console.print()
-    kok = repo or find_git_root() or Path.cwd()
-    db_yolu = _get_db(kok)
+    root = repo or find_git_root() or Path.cwd()
+    db_path = _get_db(root)
 
-    # DB yoksa init et
-    init_db(db_yolu)
+    # Initialize DB if not exists
+    init_db(db_path)
 
-    git_repo = get_repo(kok)
+    git_repo = get_repo(root)
     if not git_repo:
-        console.print("[bold red]Hata:[/bold red] Git repo bulunamadı.")
+        console.print("[bold red]Error:[/bold red] Git repo not found.")
         raise typer.Exit(1)
 
-    with console.status("[dim]Son commit analiz ediliyor...[/dim]"):
-        commit_hash, sonuclar = score_latest_commit(kok)
+    with console.status("[dim]Analyzing latest commit...[/dim]"):
+        commit_hash, results = score_latest_commit(root)
 
     if not commit_hash:
-        console.print("[yellow]Henüz commit bulunamadı.[/yellow]")
+        console.print("[yellow]No commits found yet.[/yellow]")
         return
 
-    # Commit bilgilerini al
+    # Get commit info
     try:
         commit = git_repo.head.commit
-        yazar = f"{commit.author.name}"
-        zaman_dam = int(commit.committed_date)
-        mesaj = commit.message.strip().splitlines()[0][:60]
+        author = f"{commit.author.name}"
+        timestamp = int(commit.committed_date)
+        message = commit.message.strip().splitlines()[0][:60]
     except Exception:
-        yazar = "Bilinmiyor"
-        zaman_dam = 0
-        mesaj = ""
+        author = "Unknown"
+        timestamp = 0
+        message = ""
 
-    # Anket (sadece hook modunda)
-    anlama_skoru: Optional[float] = None
+    # Survey (hook mode only)
+    understanding_score: Optional[float] = None
     if hook:
-        anlama_skoru = run_survey(commit_hash)
+        understanding_score = run_survey(commit_hash)
 
-    # DB'ye kaydet
+    # Save to DB
     save_commit(
         commit_hash=commit_hash,
-        author=yazar,
-        timestamp=zaman_dam,
-        files_changed=len(sonuclar),
-        understanding_score=anlama_skoru,
-        db_path=db_yolu,
+        author=author,
+        timestamp=timestamp,
+        files_changed=len(results),
+        understanding_score=understanding_score,
+        db_path=db_path,
     )
-    for s in sonuclar:
+    for s in results:
         save_file_score(
             commit_hash=commit_hash,
             file_path=s.file_path,
             ai_probability=s.ai_probability,
             complexity_score=s.complexity_score,
             comment_ratio=s.comment_ratio,
-            understanding_score=anlama_skoru,
-            db_path=db_yolu,
+            understanding_score=understanding_score,
+            db_path=db_path,
         )
 
-    # Özet göster
-    if sonuclar:
-        ort_ai = sum(s.ai_probability for s in sonuclar) / len(sonuclar)
-        risk_etiketi, risk_renk = _risk_etiketi(ort_ai * 100)
+    # Show summary
+    if results:
+        avg_ai = sum(s.ai_probability for s in results) / len(results)
+        risk_label, risk_color = _risk_label(avg_ai * 100)
 
-        anlama_goster = (
-            f"[bold green]{anlama_skoru:.1f}/5[/bold green]"
-            if anlama_skoru is not None
-            else "[dim]Anket yapılmadı[/dim]"
+        understanding_display = (
+            f"[bold green]{understanding_score:.1f}/5[/bold green]"
+            if understanding_score is not None
+            else "[dim]No survey[/dim]"
         )
 
         console.print(
             Panel(
-                f"[bold]Commit:[/bold] [dim]{commit_hash[:8]}[/dim]  [dim]{mesaj}[/dim]\n"
-                f"[bold]Yazar:[/bold] {yazar}\n"
-                f"[bold]Değişen dosyalar:[/bold] {len(sonuclar)}\n"
-                f"[bold]Ort. AI olasılığı:[/bold] [bold {risk_renk}]%{ort_ai*100:.0f} ({risk_etiketi})[/bold {risk_renk}]\n"
-                f"[bold]Anlama skoru:[/bold] {anlama_goster}",
-                title="[bold cyan]🧬 CodeDNA — Commit Skoru[/bold cyan]",
+                f"[bold]Commit:[/bold] [dim]{commit_hash[:8]}[/dim]  [dim]{message}[/dim]\n"
+                f"[bold]Author:[/bold] {author}\n"
+                f"[bold]Changed files:[/bold] {len(results)}\n"
+                f"[bold]Avg. AI probability:[/bold] [bold {risk_color}]{avg_ai*100:.0f}% ({risk_label})[/bold {risk_color}]\n"
+                f"[bold]Understanding score:[/bold] {understanding_display}",
+                title="[bold cyan]🧬 CodeDNA — Commit Score[/bold cyan]",
                 border_style="cyan",
                 padding=(1, 2),
             )
         )
-        console.print("[dim]Commit skoru kaydedildi.[/dim]\n")
+        console.print("[dim]Commit score saved.[/dim]\n")
 
-    # Post-commit hook: korumalı modül ihlallerini kontrol et ve uyar (bloklama YOK)
+    # Post-commit hook: check protected module violations and warn (NO blocking)
     if hook:
         try:
-            from codedna.protection import ihlal_uyarisi_goster
-            uyarilar = ihlal_uyarisi_goster(db_yolu)
-            for uyari in uyarilar:
-                console.print(f"[bold red]{uyari}[/bold red]")
+            from codedna.protection import show_violation_warnings
+            warnings = show_violation_warnings(db_path)
+            for warning in warnings:
+                console.print(f"[bold red]{warning}[/bold red]")
         except Exception:
-            pass  # Hook'u asla bozmaz
+            pass  # Never breaks the hook
 
     else:
         console.print(
             f"[bold]Commit:[/bold] [dim]{commit_hash[:8]}[/dim]\n"
-            "[dim]Bu commit'te desteklenen kod dosyası bulunamadı.[/dim]"
+            "[dim]No supported code files found in this commit.[/dim]"
         )
 
 
@@ -303,63 +329,63 @@ def status(
 # ---------------------------------------------------------------------------
 @app.command()
 def history(
-    repo: Optional[Path] = typer.Option(None, "--repo", "-r", help="Git repo dizini"),
-    limit: int = typer.Option(20, "--limit", "-n", help="Gösterilecek commit sayısı"),
+    repo: Optional[Path] = typer.Option(None, "--repo", "-r", help="Git repo directory"),
+    limit: int = typer.Option(20, "--limit", "-n", help="Number of commits to show"),
 ) -> None:
-    """Geçmiş commit skorlarını tablo olarak göster."""
+    """Show historical commit scores as a table."""
     console.print()
-    kok = repo or find_git_root() or Path.cwd()
-    db_yolu = _get_db(kok)
+    root = repo or find_git_root() or Path.cwd()
+    db_path = _get_db(root)
 
-    init_db(db_yolu)
-    satirlar = get_commit_history(limit=limit, db_path=db_yolu)
+    init_db(db_path)
+    rows = get_commit_history(limit=limit, db_path=db_path)
 
-    if not satirlar:
+    if not rows:
         console.print(
-            "[yellow]Henüz kayıtlı commit yok.[/yellow]\n"
-            "[dim]İpucu: 'codedna init' ile kurulum yapın, ardından commit atın.[/dim]"
+            "[yellow]No commits recorded yet.[/yellow]\n"
+            "[dim]Tip: run 'codedna init' to set up, then make a commit.[/dim]"
         )
         return
 
-    tablo = Table(
-        title=f"[bold cyan]🧬 CodeDNA — Son {len(satirlar)} Commit[/bold cyan]",
+    table = Table(
+        title=f"[bold cyan]🧬 CodeDNA — Last {len(rows)} Commits[/bold cyan]",
         border_style="dim",
         show_lines=True,
         header_style="bold",
     )
-    tablo.add_column("Commit", style="dim", min_width=10)
-    tablo.add_column("Yazar", min_width=15)
-    tablo.add_column("Tarih", min_width=17)
-    tablo.add_column("Dosya", justify="right", min_width=6)
-    tablo.add_column("Anlama", justify="center", min_width=12)
+    table.add_column("Commit", style="dim", min_width=10)
+    table.add_column("Author", min_width=15)
+    table.add_column("Date", min_width=17)
+    table.add_column("Files", justify="right", min_width=6)
+    table.add_column("Understanding", justify="center", min_width=12)
 
-    for satir in satirlar:
-        tarih_str = (
-            datetime.fromtimestamp(satir["timestamp"]).strftime("%Y-%m-%d %H:%M")
-            if satir["timestamp"]
+    for row in rows:
+        date_str = (
+            datetime.fromtimestamp(row["timestamp"]).strftime("%Y-%m-%d %H:%M")
+            if row["timestamp"]
             else "?"
         )
 
-        if satir["understanding_score"] is not None:
-            skor = satir["understanding_score"]
-            if skor >= 4.0:
-                anlama = f"[green]✅ {skor:.1f}/5[/green]"
-            elif skor >= 2.5:
-                anlama = f"[yellow]🔶 {skor:.1f}/5[/yellow]"
+        if row["understanding_score"] is not None:
+            score = row["understanding_score"]
+            if score >= 4.0:
+                understanding = f"[green]✅ {score:.1f}/5[/green]"
+            elif score >= 2.5:
+                understanding = f"[yellow]🔶 {score:.1f}/5[/yellow]"
             else:
-                anlama = f"[red]🔴 {skor:.1f}/5[/red]"
+                understanding = f"[red]🔴 {score:.1f}/5[/red]"
         else:
-            anlama = "[dim]⚠️  Yok[/dim]"
+            understanding = "[dim]⚠️  None[/dim]"
 
-        tablo.add_row(
-            satir["commit_hash"][:8],
-            satir["author"] or "?",
-            tarih_str,
-            str(satir["files_changed"] or 0),
-            anlama,
+        table.add_row(
+            row["commit_hash"][:8],
+            row["author"] or "?",
+            date_str,
+            str(row["files_changed"] or 0),
+            understanding,
         )
 
-    console.print(tablo)
+    console.print(table)
     console.print()
 
 
@@ -368,33 +394,33 @@ def history(
 # ---------------------------------------------------------------------------
 @app.command()
 def serve(
-    host: str = typer.Option("127.0.0.1", "--host", help="Dinlenecek IP adresi"),
-    port: int = typer.Option(8000, "--port", "-p", help="Port numarası"),
-    reload: bool = typer.Option(False, "--reload", help="Geliştirme modunda otomatik yeniden başlat"),
-    repo: Optional[Path] = typer.Option(None, "--repo", "-r", help="Git repo dizini"),
+    host: str = typer.Option("127.0.0.1", "--host", help="IP address to listen on"),
+    port: int = typer.Option(8000, "--port", "-p", help="Port number"),
+    reload: bool = typer.Option(False, "--reload", help="Auto-reload in development mode"),
+    repo: Optional[Path] = typer.Option(None, "--repo", "-r", help="Git repo directory"),
 ) -> None:
-    """FastAPI REST sunucusunu başlat."""
+    """Start the FastAPI REST server."""
     import os
     import uvicorn
 
-    kok = repo or find_git_root() or Path.cwd()
-    db_yolu = _get_db(kok)
+    root = repo or find_git_root() or Path.cwd()
+    db_path = _get_db(root)
 
-    # Ortam değişkenlerini ayarla (api.py tarafından okunur)
-    os.environ.setdefault("CODEDNA_REPO_PATH", str(kok))
-    os.environ.setdefault("CODEDNA_DB_PATH", str(db_yolu))
+    # Set environment variables (read by api.py)
+    os.environ.setdefault("CODEDNA_REPO_PATH", str(root))
+    os.environ.setdefault("CODEDNA_DB_PATH", str(db_path))
 
-    init_db(db_yolu)
+    init_db(db_path)
 
     console.print()
     console.print(
         Panel(
-            f"[bold cyan]🧬 CodeDNA API[/bold cyan] başlatılıyor...\n\n"
-            f"[bold]Adres:[/bold]    [link]http://{host}:{port}[/link]\n"
+            f"[bold cyan]🧬 CodeDNA API[/bold cyan] starting...\n\n"
+            f"[bold]Address:[/bold]  [link]http://{host}:{port}[/link]\n"
             f"[bold]Docs:[/bold]     [link]http://{host}:{port}/docs[/link]\n"
-            f"[bold]Repo:[/bold]     [dim]{kok}[/dim]\n"
-            f"[bold]Veritabanı:[/bold] [dim]{db_yolu}[/dim]\n\n"
-            "[dim]Durdurmak için Ctrl+C[/dim]",
+            f"[bold]Repo:[/bold]     [dim]{root}[/dim]\n"
+            f"[bold]Database:[/bold] [dim]{db_path}[/dim]\n\n"
+            "[dim]Press Ctrl+C to stop[/dim]",
             border_style="cyan",
             padding=(1, 2),
         )
@@ -414,62 +440,62 @@ def serve(
 # ---------------------------------------------------------------------------
 @app.command()
 def report(
-    output: Path = typer.Option(Path("codedna-report.html"), "--output", "-o", help="Çıktı dosyası"),
-    repo: Optional[Path] = typer.Option(None, "--repo", "-r", help="Git repo dizini"),
-    open_browser: bool = typer.Option(False, "--open", help="Raporu tarayıcıda aç"),
+    output: Path = typer.Option(Path("codedna-report.html"), "--output", "-o", help="Output file"),
+    repo: Optional[Path] = typer.Option(None, "--repo", "-r", help="Git repo directory"),
+    open_browser: bool = typer.Option(False, "--open", help="Open report in browser"),
 ) -> None:
-    """HTML rapor oluştur."""
+    """Generate HTML report."""
     import webbrowser
     from datetime import datetime
-    from codedna.api import _rapor_html_olustur
+    from codedna.api import _build_html_report
 
-    kok = repo or find_git_root() or Path.cwd()
-    db_yolu = _get_db(kok)
-    init_db(db_yolu)
+    root = repo or find_git_root() or Path.cwd()
+    db_path = _get_db(root)
+    init_db(db_path)
 
     console.print()
-    console.print("[bold cyan]🧬 CodeDNA[/bold cyan] — HTML rapor oluşturuluyor...\n")
+    console.print("[bold cyan]🧬 CodeDNA[/bold cyan] — Generating HTML report...\n")
 
-    with console.status("[dim]Dosyalar analiz ediliyor...[/dim]"):
-        sonuclar = scan_repository(kok, max_files=200)
+    with console.status("[dim]Analyzing files...[/dim]"):
+        results = scan_repository(root, max_files=200)
 
-    sonuclar.sort(key=lambda s: s.ai_probability, reverse=True)
-    commitler = get_commit_history(limit=50, db_path=db_yolu)
+    results.sort(key=lambda s: s.ai_probability, reverse=True)
+    commits = get_commit_history(limit=50, db_path=db_path)
 
-    tum_ai = [s.ai_probability for s in sonuclar]
-    ort_ai = sum(tum_ai) / len(tum_ai) if tum_ai else 0.0
-    risk_etkt, _ = _risk_etiketi(ort_ai * 100)
+    all_ai = [s.ai_probability for s in results]
+    avg_ai = sum(all_ai) / len(all_ai) if all_ai else 0.0
+    risk_label, _ = _risk_label(avg_ai * 100)
 
-    anlama_skorlari = [
+    understanding_scorelari = [
         float(c["understanding_score"])
-        for c in commitler
+        for c in commits
         if c["understanding_score"] is not None
     ]
-    ort_anlama = sum(anlama_skorlari) / len(anlama_skorlari) if anlama_skorlari else None
+    avg_understanding = sum(understanding_scorelari) / len(understanding_scorelari) if understanding_scorelari else None
 
-    html = _rapor_html_olustur(
-        repo_adi=kok.name,
-        toplam_dosya=len(sonuclar),
-        ort_ai=ort_ai,
-        risk=risk_etkt,
-        ort_anlama=ort_anlama,
-        toplam_commit=len(commitler),
-        dosyalar=sonuclar,
-        commitler=commitler,
-        kok=kok,
+    html = _build_html_report(
+        repo_name=root.name,
+        total_files=len(results),
+        avg_ai=avg_ai,
+        risk=risk_label,
+        avg_understanding=avg_understanding,
+        total_commits=len(commits),
+        files=results,
+        commits=commits,
+        root=root,
     )
 
     output.write_text(html, encoding="utf-8")
-    console.print(f"[green]✓[/green] Rapor oluşturuldu: [bold]{output.resolve()}[/bold]")
+    console.print(f"[green]✓[/green] Report generated: [bold]{output.resolve()}[/bold]")
     console.print(
-        f"  [dim]{len(sonuclar)} dosya · "
-        f"Ort. AI: %{ort_ai*100:.0f} · "
-        f"Risk: {risk_etkt}[/dim]"
+        f"  [dim]{len(results)} files · "
+        f"Avg. AI: {avg_ai*100:.0f}% · "
+        f"Risk: {risk_label}[/dim]"
     )
 
     if open_browser:
         webbrowser.open(output.resolve().as_uri())
-        console.print("[dim]Tarayıcıda açılıyor...[/dim]")
+        console.print("[dim]Opening in browser...[/dim]")
 
     console.print()
 
@@ -479,66 +505,65 @@ def report(
 # ---------------------------------------------------------------------------
 @app.command(name="ai-compare")
 def ai_compare(
-    repo: Optional[Path] = typer.Option(None, "--repo", "-r", help="Git repo dizini"),
+    repo: Optional[Path] = typer.Option(None, "--repo", "-r", help="Git repo directory"),
 ) -> None:
-    """Repo genelinde AI araç bazlı karşılaştırma tablosu göster."""
+    """Show repo-wide AI tool comparison table."""
     from codedna.ai_fingerprint import compare_tools_in_repo
     from codedna.plan import is_feature_available
 
     if not is_feature_available("ai_comparison"):
         console.print(
             Panel(
-                "[bold yellow]🔒 Bu özellik Enterprise planında mevcut.[/bold yellow]\n"
-                "[dim]This feature is available on Enterprise plan.[/dim]\n\n"
-                "[dim]Yükseltmek için:[/dim] [cyan]codedna plan activate <LICENSE_KEY>[/cyan]",
+                "[bold yellow]🔒 This feature is available on Enterprise plan.[/bold yellow]\n\n"
+                "[dim]To upgrade:[/dim] [cyan]codedna plan activate <LICENSE_KEY>[/cyan]",
                 border_style="yellow",
                 padding=(1, 2),
             )
         )
         raise typer.Exit(1)
 
-    kok = repo or find_git_root() or Path.cwd()
-    db_yolu = _get_db(kok)
-    init_db(db_yolu)
+    root = repo or find_git_root() or Path.cwd()
+    db_path = _get_db(root)
+    init_db(db_path)
 
     console.print()
-    console.print("[bold cyan]🧬 CodeDNA[/bold cyan] — AI araç parmak izi analizi çalışıyor...\n")
+    console.print("[bold cyan]🧬 CodeDNA[/bold cyan] — AI tool fingerprint analysis running...\n")
     console.print(
-        "[dim]⚠️  Bu tespit örüntü tabanlı bir tahmindir — kesin değildir.[/dim]\n"
+        "[dim]⚠️  This detection is pattern-based estimation — not definitive.[/dim]\n"
     )
 
-    with console.status("[dim]Dosyalar analiz ediliyor...[/dim]"):
-        sonuclar = compare_tools_in_repo(kok, db_yolu)
+    with console.status("[dim]Analyzing files...[/dim]"):
+        results = compare_tools_in_repo(root, db_path)
 
-    if not sonuclar:
-        console.print("[yellow]Analiz edilecek dosya bulunamadı.[/yellow]")
+    if not results:
+        console.print("[yellow]No files found to analyze.[/yellow]")
         return
 
-    tablo = Table(border_style="dim", show_lines=True, header_style="bold")
-    tablo.add_column("AI Aracı", min_width=12)
-    tablo.add_column("Dosya Sayısı", justify="right", min_width=13)
-    tablo.add_column("Ort. AI Skoru", justify="right", min_width=13)
-    tablo.add_column("Ort. Anlama", justify="right", min_width=12)
+    table = Table(border_style="dim", show_lines=True, header_style="bold")
+    table.add_column("AI Tool", min_width=12)
+    table.add_column("File Count", justify="right", min_width=13)
+    table.add_column("Avg. AI Score", justify="right", min_width=13)
+    table.add_column("Avg. Understanding", justify="right", min_width=12)
 
-    arac_emojileri = {
+    tool_emojis = {
         "copilot": "🐙", "cursor": "🖱️",
         "claude": "🧠", "unknown": "❓",
     }
 
-    for arac, veri in sorted(sonuclar.items(), key=lambda x: -x[1].get("dosya_sayisi", 0)):
-        emoji = arac_emojileri.get(arac, "🤖")
-        anlama = (
-            f"{veri['avg_understanding']:.1f}/5"
-            if veri.get("avg_understanding") else "—"
+    for tool, data in sorted(results.items(), key=lambda x: -x[1].get("file_count", 0)):
+        emoji = tool_emojis.get(tool, "🤖")
+        understanding = (
+            f"{data['avg_understanding']:.1f}/5"
+            if data.get("avg_understanding") else "—"
         )
-        tablo.add_row(
-            f"{emoji} {arac}",
-            str(veri.get("dosya_sayisi", 0)),
-            f"%{veri.get('avg_ai_probability', 0) * 100:.0f}",
-            anlama,
+        table.add_row(
+            f"{emoji} {tool}",
+            str(data.get("file_count", 0)),  # type: ignore
+            f"%{data.get('avg_ai_probability', 0) * 100:.0f}",
+            understanding,
         )
 
-    console.print(tablo)
+    console.print(table)
     console.print()
 
 
@@ -547,11 +572,11 @@ def ai_compare(
 # ---------------------------------------------------------------------------
 @app.command()
 def onboarding(
-    author: Optional[str] = typer.Option(None, "--author", "-a", help="Tek yazar analizi"),
-    team: bool = typer.Option(False, "--team", "-t", help="Takım geneli özet"),
-    repo: Optional[Path] = typer.Option(None, "--repo", "-r", help="Git repo dizini"),
+    author: Optional[str] = typer.Option(None, "--author", "-a", help="Single author analysis"),
+    team: bool = typer.Option(False, "--team", "-t", help="Team-wide summary"),
+    repo: Optional[Path] = typer.Option(None, "--repo", "-r", help="Git repo directory"),
 ) -> None:
-    """Geliştirici onboarding hızını ölç ve ramp-up eğrisini göster."""
+    """Measure developer onboarding speed and show ramp-up curve."""
     from codedna.onboarding import (
         get_author_curve, team_onboarding_summary, get_all_authors,
     )
@@ -560,119 +585,119 @@ def onboarding(
     if not is_feature_available("sprint_health"):
         console.print(
             Panel(
-                "[bold yellow]🔒 Bu özellik Team planında mevcut.[/bold yellow]\n"
-                "[dim]Yükseltmek için:[/dim] [cyan]codedna plan activate <LICENSE_KEY>[/cyan]",
+                "[bold yellow]🔒 This feature is available on Team plan.[/bold yellow]\n"
+                "[dim]To upgrade:[/dim] [cyan]codedna plan activate <LICENSE_KEY>[/cyan]",
                 border_style="yellow",
             )
         )
         raise typer.Exit(1)
 
-    kok = repo or find_git_root() or Path.cwd()
-    db_yolu = _get_db(kok)
-    init_db(db_yolu)
+    root = repo or find_git_root() or Path.cwd()
+    db_path = _get_db(root)
+    init_db(db_path)
 
     console.print()
 
     if team or not author:
-        # Takım özeti
-        console.print("[bold cyan]🧬 CodeDNA[/bold cyan] — Onboarding takım özeti\n")
+        # Team summary
+        console.print("[bold cyan]🧬 CodeDNA[/bold cyan] — Onboarding team summary\n")
 
-        with console.status("[dim]Analiz ediliyor...[/dim]"):
-            ozet = team_onboarding_summary(db_yolu)
+        with console.status("[dim]Analyzing...[/dim]"):
+            summary = team_onboarding_summary(db_path)
 
-        if not ozet:
-            console.print("[yellow]Kayıtlı yazar bulunamadı.[/yellow]")
+        if not summary:
+            console.print("[yellow]No authors found.[/yellow]")
             return
 
-        tablo = Table(
-            title="[bold cyan]🚀 Onboarding Özeti[/bold cyan]",
+        table = Table(
+            title="[bold cyan]🚀 Onboarding Summary[/bold cyan]",
             border_style="dim",
             show_lines=True,
             header_style="bold",
         )
-        tablo.add_column("Yazar", min_width=18)
-        tablo.add_column("Commit", justify="right", min_width=8)
-        tablo.add_column("Anketli", justify="right", min_width=9)
-        tablo.add_column("Ramp-up", justify="center", min_width=12)
-        tablo.add_column("Son Anlama", justify="center", min_width=12)
+        table.add_column("Author", min_width=18)
+        table.add_column("Commits", justify="right", min_width=8)
+        table.add_column("Surveyed", justify="right", min_width=9)
+        table.add_column("Ramp-up", justify="center", min_width=12)
+        table.add_column("Latest Understanding", justify="center", min_width=12)
 
-        for y in ozet:
+        for y in summary:
             ramp_str = (
-                f"{y['ramp_up_hafta']:.1f} hafta"
-                if y["ramp_up_hafta"] is not None
-                else ("[dim]Yeterli veri yok[/dim]" if not y["yeterli_veri"] else "[yellow]Eşik aşılmadı[/yellow]")
+                f"{y['ramp_up_weeks']:.1f} weeks"
+                if y["ramp_up_weeks"] is not None
+                else ("[dim]Insufficient data[/dim]" if not y["sufficient_data"] else "[yellow]Threshold not reached[/yellow]")
             )
-            anlama_str = (
-                f"{y['son_ort_anlama']:.1f}/5" if y["son_ort_anlama"] else "—"
+            understanding_str = (
+                f"{y['latest_avg_understanding']:.1f}/5" if y["latest_avg_understanding"] else "—"
             )
-            tablo.add_row(
-                y["yazar"],
-                str(y["toplam_commit"]),
-                str(y["anlama_skoru_olan"]),
+            table.add_row(
+                y["author"],
+                str(y["total_commits"]),
+                str(y["commits_with_understanding"]),
                 ramp_str,
-                anlama_str,
+                understanding_str,
             )
 
-        console.print(tablo)
+        console.print(table)
 
     else:
-        # Tek yazar eğrisi
-        console.print(f"[bold cyan]🧬 CodeDNA[/bold cyan] — [bold]{author}[/bold] onboarding eğrisi\n")
+        # Single author curve
+        console.print(f"[bold cyan]🧬 CodeDNA[/bold cyan] — [bold]{author}[/bold] onboarding curve\n")
 
-        with console.status("[dim]Analiz ediliyor...[/dim]"):
-            egri = get_author_curve(author, db_yolu)
+        with console.status("[dim]Analyzing...[/dim]"):
+            curve = get_author_curve(author, db_path)
 
-        if egri.toplam_commit == 0:
-            console.print(f"[yellow]'{author}' yazarına ait commit bulunamadı.[/yellow]")
+        if curve.total_commits == 0:
+            console.print(f"[yellow]No commits found for author '{author}'.[/yellow]")
             return
 
         # Ramp-up panel
         ramp_str = (
-            f"[green]{egri.ramp_up_hafta:.1f} hafta[/green]"
-            if egri.ramp_up_hafta is not None
-            else "[yellow]Eşik henüz aşılmadı[/yellow]"
-            if egri.anlama_skoru_olan >= 5
-            else "[dim]Yeterli veri yok (en az 5 commit)[/dim]"
+            f"[green]{curve.ramp_up_weeks:.1f} weeks[/green]"
+            if curve.ramp_up_weeks is not None
+            else "[yellow]Threshold not yet reached[/yellow]"
+            if curve.commits_with_understanding >= 5
+            else "[dim]Insufficient data (at least 5 commits needed)[/dim]"
         )
 
-        anlama_str = (
-            f"{egri.son_ort_anlama:.1f}/5" if egri.son_ort_anlama else "—"
+        understanding_str = (
+            f"{curve.latest_avg_understanding:.1f}/5" if curve.latest_avg_understanding else "—"
         )
 
         console.print(
             Panel(
-                f"[bold]Yazar:[/bold] {egri.yazar}\n"
-                f"[bold]Toplam commit:[/bold] {egri.toplam_commit}\n"
-                f"[bold]Anketli commit:[/bold] {egri.anlama_skoru_olan}\n"
-                f"[bold]Tahmini ramp-up:[/bold] {ramp_str}\n"
-                f"[bold]Son ort. anlama:[/bold] {anlama_str}",
-                title="[bold cyan]🚀 Onboarding Analizi[/bold cyan]",
+                f"[bold]Author:[/bold] {curve.author}\n"
+                f"[bold]Total commits:[/bold] {curve.total_commits}\n"
+                f"[bold]Surveyed commits:[/bold] {curve.commits_with_understanding}\n"
+                f"[bold]Estimated ramp-up:[/bold] {ramp_str}\n"
+                f"[bold]Latest avg. understanding:[/bold] {understanding_str}",
+                title="[bold cyan]🚀 Onboarding Analysis[/bold cyan]",
                 border_style="cyan",
                 padding=(1, 2),
             )
         )
 
-        # Commit bazlı tablo (anket verisi olanlar)
-        anketli = [n for n in egri.noktalar if n.understanding_score is not None]
-        if anketli:
-            tablo = Table(border_style="dim", show_lines=True, header_style="bold")
-            tablo.add_column("#", justify="right", min_width=4)
-            tablo.add_column("Hash", style="dim", min_width=10)
-            tablo.add_column("Tarih", min_width=12)
-            tablo.add_column("Hafta", justify="right", min_width=7)
-            tablo.add_column("Anlama", justify="center", min_width=10)
+        # Commit-based table (with survey data)
+        surveyed = [n for n in curve.points if n.understanding_score is not None]
+        if surveyed:
+            table = Table(border_style="dim", show_lines=True, header_style="bold")
+            table.add_column("#", justify="right", min_width=4)
+            table.add_column("Hash", style="dim", min_width=10)
+            table.add_column("Date", min_width=12)
+            table.add_column("Week", justify="right", min_width=7)
+            table.add_column("Understanding", justify="center", min_width=10)
 
-            for n in anketli:
-                skor = n.understanding_score or 0.0
-                renk = "green" if skor >= 4 else "yellow" if skor >= 2.5 else "red"
-                tablo.add_row(
+            for n in surveyed:
+                score = n.understanding_score or 0.0
+                color = "green" if score >= 4 else "yellow" if score >= 2.5 else "red"
+                table.add_row(
                     str(n.commit_no),
                     n.commit_hash[:8],
-                    n.tarih.strftime("%Y-%m-%d"),
-                    str(n.hafta_no),
-                    f"[{renk}]{skor:.1f}/5[/{renk}]",
+                    n.date.strftime("%Y-%m-%d"),
+                    str(n.week_number),
+                    f"[{color}]{score:.1f}/5[/{color}]",
                 )
-            console.print(tablo)
+            console.print(table)
 
     console.print()
 
@@ -682,222 +707,222 @@ def onboarding(
 # ---------------------------------------------------------------------------
 @app.command(name="pr-comment")
 def pr_comment(
-    repo: Optional[str] = typer.Option(None, "--repo", help="owner/repo formatında repo (boşsa GITHUB_REPOSITORY env'den alınır)"),
-    pr: Optional[int] = typer.Option(None, "--pr", help="PR numarası (boşsa event payload'dan algılanır)"),
-    rate: float = typer.Option(75.0, "--rate", help="Teknik borç saatlik ücreti"),
+    repo: Optional[str] = typer.Option(None, "--repo", help="Repo in owner/repo format (defaults to GITHUB_REPOSITORY env var)"),
+    pr: Optional[int] = typer.Option(None, "--pr", help="PR number (auto-detected from event payload if omitted)"),
+    rate: float = typer.Option(75.0, "--rate", help="Hourly rate for technical debt"),
 ) -> None:
-    """GitHub PR'ına CodeDNA analiz yorumu bırak (mevcut yorumu günceller, spam yapmaz)."""
+    """Post CodeDNA analysis comment to GitHub PR (updates existing comment, no spam)."""
     import os
     from codedna.integrations.github_bot import (
-        format_pr_comment, post_or_update_comment, github_actions_pr_bilgisi,
+        format_pr_comment, post_or_update_comment, github_actions_pr_infosi,
     )
     from codedna.tech_debt import calculate_repo_debt
 
-    # Token — asla loglanmaz
+    # Token — never logged
     token = os.environ.get("GITHUB_TOKEN")
     if not token:
         console.print(
-            "[bold red]Hata:[/bold red] GITHUB_TOKEN ortam değişkeni tanımlanmamış."
+            "[bold red]Error:[/bold red] GITHUB_TOKEN environment variable is not set."
         )
         raise typer.Exit(1)
 
-    # Repo ve PR numarası — önce parametre, sonra GitHub Actions env
-    hedef_repo = repo
-    hedef_pr = pr
+    # Repo and PR number — parameter first, then GitHub Actions env
+    target_repo = repo
+    target_pr = pr
 
-    if not hedef_repo or not hedef_pr:
-        bilgi = github_actions_pr_bilgisi()
-        if bilgi:
-            otomatik_repo, otomatik_pr = bilgi
-            hedef_repo = hedef_repo or otomatik_repo
-            hedef_pr = hedef_pr or otomatik_pr
+    if not target_repo or not target_pr:
+        info = github_actions_pr_infosi()
+        if info:
+            auto_repo, auto_pr = info
+            target_repo = target_repo or auto_repo
+            target_pr = target_pr or auto_pr
 
-    if not hedef_repo or not hedef_pr:
+    if not target_repo or not target_pr:
         console.print(
-            "[bold red]Hata:[/bold red] Repo ve PR numarası bulunamadı.\n"
-            "[dim]--repo owner/repo --pr 42 ile belirtin veya GitHub Actions içinde çalıştırın.[/dim]"
+            "[bold red]Error:[/bold red] Repo and PR number not found.\n"
+            "[dim]Specify with --repo owner/repo --pr 42 or run inside GitHub Actions.[/dim]"
         )
         raise typer.Exit(1)
 
-    kok = find_git_root() or Path.cwd()
-    db_yolu = _get_db(kok)
-    init_db(db_yolu)
+    root = find_git_root() or Path.cwd()
+    db_path = _get_db(root)
+    init_db(db_path)
 
-    console.print(f"\n[bold cyan]🧬 CodeDNA[/bold cyan] — PR #{hedef_pr} analiz ediliyor...\n")
+    console.print(f"\n[bold cyan]🧬 CodeDNA[/bold cyan] — Analyzing PR #{target_pr}...\n")
 
-    with console.status("[dim]Dosyalar taranıyor...[/dim]"):
+    with console.status("[dim]Scanning files...[/dim]"):
         from codedna.scorer import scan_repository
-        sonuclar = scan_repository(kok, max_files=200)
+        results = scan_repository(root, max_files=200)
 
-    debt_ozeti_dict: Optional[dict] = None
+    debt_summary_dict: Optional[dict] = None
     try:
-        debt = calculate_repo_debt(kok, db_yolu, hourly_rate=rate)
-        debt_ozeti_dict = {
-            "toplam_debt_saatleri": debt.toplam_debt_saatleri,
-            "toplam_aylik_maliyet_usd": debt.toplam_aylik_maliyet_usd,
+        debt = calculate_repo_debt(root, db_path, hourly_rate=rate)
+        debt_summary_dict = {
+            "total_debt_hours": debt.total_debt_hours,
+            "total_monthly_cost_usd": debt.total_monthly_cost_usd,
         }
     except Exception:
         pass
 
-    yorum = format_pr_comment(sonuclar, debt_ozeti_dict)
+    comment = format_pr_comment(results, debt_summary_dict)
 
     try:
-        sonuc = post_or_update_comment(hedef_repo, hedef_pr, yorum, token)
-        yorum_url = sonuc.get("html_url", "")
+        result = post_or_update_comment(target_repo, target_pr, comment, token)
+        comment_url = result.get("html_url", "")
         console.print(
-            f"[green]✓[/green] PR yorumu gönderildi: [dim]{yorum_url}[/dim]\n"
+            f"[green]✓[/green] PR comment posted: [dim]{comment_url}[/dim]\n"
         )
     except RuntimeError as e:
-        console.print(f"[bold red]Hata:[/bold red] GitHub API isteği başarısız: {e}")
+        console.print(f"[bold red]Error:[/bold red] GitHub API request failed: {e}")
         raise typer.Exit(1)
 
 
 # ---------------------------------------------------------------------------
 # codedna protect
 # ---------------------------------------------------------------------------
-protect_app = typer.Typer(help="Korumalı modül yönetimi.")
+protect_app = typer.Typer(help="Protected module management.")
 app.add_typer(protect_app, name="protect")
 
 
 @protect_app.command("add")
 def protect_add(
-    file_path: str = typer.Argument(..., help="Korunacak dosya yolu"),
-    threshold: float = typer.Option(3.5, "--threshold", "-t", help="Minimum anlama skoru eşiği"),
-    label: str = typer.Option("", "--label", "-l", help="İnsan okunabilir etiket"),
-    repo: Optional[Path] = typer.Option(None, "--repo", "-r", help="Git repo dizini"),
+    file_path: str = typer.Argument(..., help="File path to protect"),
+    threshold: float = typer.Option(3.5, "--threshold", "-t", help="Minimum understanding score threshold"),
+    label: str = typer.Option("", "--label", "-l", help="Human-readable label"),
+    repo: Optional[Path] = typer.Option(None, "--repo", "-r", help="Git repo directory"),
 ) -> None:
-    """Bir dosyayı korumalı modül olarak işaretle."""
+    """Mark a file as protected module."""
     from codedna.protection import protect_module
     from codedna.plan import is_feature_available
 
     if not is_feature_available("bus_factor"):
-        console.print("[bold yellow]🔒 Bu özellik Team planında mevcut.[/bold yellow]")
+        console.print("[bold yellow]🔒 This feature is available on Team plan.[/bold yellow]")
         raise typer.Exit(1)
 
-    kok = repo or find_git_root() or Path.cwd()
-    db_yolu = _get_db(kok)
-    init_db(db_yolu)
+    root = repo or find_git_root() or Path.cwd()
+    db_path = _get_db(root)
+    init_db(db_path)
 
-    # Göreli yolu tam yola çevir
-    tam_yol = str((kok / file_path).resolve())
-    etiket = label or file_path
-    yazar = "cli"
+    # Convert relative path to absolute
+    full_path = str((root / file_path).resolve())
+    label = label or file_path
+    author = "cli"
 
-    kayit_id = protect_module(tam_yol, threshold, etiket, yazar, db_yolu)
+    record_id = protect_module(full_path, threshold, label, author, db_path)
     console.print(
-        f"[green]✓[/green] Korumalı modül eklendi: [cyan]{file_path}[/cyan]\n"
-        f"  [dim]Etiket:[/dim] {etiket} · [dim]Eşik:[/dim] {threshold}/5 · [dim]ID:[/dim] #{kayit_id}"
+        f"[green]✓[/green] Protected module added: [cyan]{file_path}[/cyan]\n"
+        f"  [dim]Label:[/dim] {label} · [dim]Threshold:[/dim] {threshold}/5 · [dim]ID:[/dim] #{record_id}"
     )
 
 
 @protect_app.command("remove")
 def protect_remove(
-    file_path: str = typer.Argument(..., help="Koruma kaldırılacak dosya yolu"),
-    repo: Optional[Path] = typer.Option(None, "--repo", "-r", help="Git repo dizini"),
+    file_path: str = typer.Argument(..., help="File path to unprotect"),
+    repo: Optional[Path] = typer.Option(None, "--repo", "-r", help="Git repo directory"),
 ) -> None:
-    """Bir dosyadan korumayı kaldır."""
+    """Remove protection from a file."""
     from codedna.protection import unprotect_module
     from codedna.plan import is_feature_available
 
     if not is_feature_available("bus_factor"):
-        console.print("[bold yellow]🔒 Bu özellik Team planında mevcut.[/bold yellow]")
+        console.print("[bold yellow]🔒 This feature is available on Team plan.[/bold yellow]")
         raise typer.Exit(1)
 
-    kok = repo or find_git_root() or Path.cwd()
-    db_yolu = _get_db(kok)
-    tam_yol = str((kok / file_path).resolve())
+    root = repo or find_git_root() or Path.cwd()
+    db_path = _get_db(root)
+    full_path = str((root / file_path).resolve())
 
-    if unprotect_module(tam_yol, db_yolu):
-        console.print(f"[green]✓[/green] Koruma kaldırıldı: [cyan]{file_path}[/cyan]")
+    if unprotect_module(full_path, db_path):
+        console.print(f"[green]✓[/green] Protection removed: [cyan]{file_path}[/cyan]")
     else:
-        console.print(f"[yellow]Bulunamadı:[/yellow] '{file_path}' korumalı modüller arasında yok.")
+        console.print(f"[yellow]Not found:[/yellow] '{file_path}' is not in the protected modules list.")
 
 
 @protect_app.command("list")
 def protect_list(
-    repo: Optional[Path] = typer.Option(None, "--repo", "-r", help="Git repo dizini"),
+    repo: Optional[Path] = typer.Option(None, "--repo", "-r", help="Git repo directory"),
 ) -> None:
-    """Tüm korumalı modülleri ve durumlarını göster."""
+    """Show all protected modules and their statuses."""
     from codedna.protection import check_protected_modules
     from codedna.plan import is_feature_available
 
     if not is_feature_available("bus_factor"):
-        console.print("[bold yellow]🔒 Bu özellik Team planında mevcut.[/bold yellow]")
+        console.print("[bold yellow]🔒 This feature is available on Team plan.[/bold yellow]")
         raise typer.Exit(1)
 
-    kok = repo or find_git_root() or Path.cwd()
-    db_yolu = _get_db(kok)
-    init_db(db_yolu)
+    root = repo or find_git_root() or Path.cwd()
+    db_path = _get_db(root)
+    init_db(db_path)
 
-    moduller = check_protected_modules(db_yolu)
-    if not moduller:
-        console.print("[yellow]Henüz korumalı modül yok.[/yellow]")
-        console.print("[dim]Eklemek için:[/dim] [cyan]codedna protect add <dosya> --label 'Etiket'[/cyan]")
+    modules = check_protected_modules(db_path)
+    if not modules:
+        console.print("[yellow]No protected modules yet.[/yellow]")
+        console.print("[dim]To add one:[/dim] [cyan]codedna protect add <file> --label 'Label'[/cyan]")
         return
 
-    tablo = Table(
-        title="[bold cyan]🛡️ Korumalı Modüller[/bold cyan]",
+    table = Table(
+        title="[bold cyan]🛡️ Protected Modules[/bold cyan]",
         border_style="dim", show_lines=True, header_style="bold",
     )
-    tablo.add_column("Dosya", min_width=30)
-    tablo.add_column("Etiket", min_width=16)
-    tablo.add_column("Eşik", justify="center", min_width=7)
-    tablo.add_column("Mevcut", justify="center", min_width=9)
-    tablo.add_column("Durum", justify="center", min_width=12)
+    table.add_column("File", min_width=30)
+    table.add_column("Label", min_width=16)
+    table.add_column("Threshold", justify="center", min_width=7)
+    table.add_column("Current", justify="center", min_width=9)
+    table.add_column("Status", justify="center", min_width=12)
 
-    for m in moduller:
-        mevcut_str = f"{m.mevcut_skor:.1f}" if m.mevcut_skor is not None else "—"
-        if m.durum == "İHLAL":
-            durum_str = "[bold red]🔴 İHLAL[/bold red]"
-        elif m.durum == "GÜVENLİ":
-            durum_str = "[green]✅ GÜVENLİ[/green]"
+    for m in modules:
+        current_str = f"{m.current_score:.1f}" if m.current_score is not None else "—"
+        if m.status == "VIOLATION":
+            status_str = "[bold red]🔴 VIOLATION[/bold red]"
+        elif m.status == "SAFE":
+            status_str = "[green]✅ SAFE[/green]"
         else:
-            durum_str = "[dim]⚪ BİLİNMİYOR[/dim]"
+            status_str = "[dim]⚪ UNKNOWN[/dim]"
 
         try:
-            goreceli = str(Path(m.dosya_yolu).relative_to(kok))
+            rel_path = str(Path(m.file_path).relative_to(root))
         except ValueError:
-            goreceli = m.dosya_yolu[-40:]
+            rel_path = m.file_path[-40:]
 
-        tablo.add_row(goreceli, m.etiket, f"{m.esik:.1f}", mevcut_str, durum_str)
+        table.add_row(rel_path, m.label, f"{m.threshold:.1f}", current_str, status_str)
 
     console.print()
-    console.print(tablo)
+    console.print(table)
     console.print()
 
 
 @protect_app.command("check")
 def protect_check(
-    repo: Optional[Path] = typer.Option(None, "--repo", "-r", help="Git repo dizini"),
+    repo: Optional[Path] = typer.Option(None, "--repo", "-r", help="Git repo directory"),
 ) -> None:
-    """Sadece eşik altına düşmüş (ihlaldeki) modülleri göster."""
+    """Show only modules that violated the threshold."""
     from codedna.protection import get_violations
     from codedna.plan import is_feature_available
 
     if not is_feature_available("bus_factor"):
-        console.print("[bold yellow]🔒 Bu özellik Team planında mevcut.[/bold yellow]")
+        console.print("[bold yellow]🔒 This feature is available on Team plan.[/bold yellow]")
         raise typer.Exit(1)
 
-    kok = repo or find_git_root() or Path.cwd()
-    db_yolu = _get_db(kok)
-    init_db(db_yolu)
+    root = repo or find_git_root() or Path.cwd()
+    db_path = _get_db(root)
+    init_db(db_path)
 
-    ihlaller = get_violations(db_yolu)
-    if not ihlaller:
-        console.print("[green]✅ Tüm korumalı modüller güvende.[/green]")
+    violations = get_violations(db_path)
+    if not violations:
+        console.print("[green]✅ All protected modules are safe.[/green]")
         return
 
     console.print()
-    for ihlal in ihlaller:
-        skor_str = f"{ihlal.mevcut_skor:.1f}" if ihlal.mevcut_skor else "?"
+    for violation in violations:
+        score_str = f"{violation.current_score:.1f}" if violation.current_score else "?"
         try:
-            goreceli = str(Path(ihlal.dosya_yolu).relative_to(kok))
+            rel_path = str(Path(violation.file_path).relative_to(root))
         except ValueError:
-            goreceli = ihlal.dosya_yolu
+            rel_path = violation.file_path
         console.print(
-            f"[bold red]⚠️  İHLAL:[/bold red] [cyan]{goreceli}[/cyan] — "
-            f"anlama: [red]{skor_str}[/red] < eşik: [yellow]{ihlal.esik:.1f}[/yellow] "
-            f"([dim]{ihlal.etiket}[/dim])"
+            f"[bold red]⚠️  VIOLATION:[/bold red] [cyan]{rel_path}[/cyan] — "
+            f"understanding: [red]{score_str}[/red] < threshold: [yellow]{violation.threshold:.1f}[/yellow] "
+            f"([dim]{violation.label}[/dim])"
         )
     console.print()
 
@@ -905,149 +930,149 @@ def protect_check(
 # ---------------------------------------------------------------------------
 # codedna interview
 # ---------------------------------------------------------------------------
-interview_app = typer.Typer(help="Aday mülakat aracı.")
+interview_app = typer.Typer(help="Candidate interview tool.")
 app.add_typer(interview_app, name="interview")
 
 
 @interview_app.command("start")
 def interview_start(
-    candidate: str = typer.Option(..., "--candidate", "-c", help="Aday adı"),
-    difficulty: str = typer.Option("medium", "--difficulty", "-d", help="Zorluk: easy|medium|hard"),
-    repo: Optional[Path] = typer.Option(None, "--repo", "-r", help="Git repo dizini"),
+    candidate: str = typer.Option(..., "--candidate", "-c", help="Candidate name"),
+    difficulty: str = typer.Option("medium", "--difficulty", "-d", help="Difficulty: easy|medium|hard"),
+    repo: Optional[Path] = typer.Option(None, "--repo", "-r", help="Git repo directory"),
 ) -> None:
-    """Yeni mülakat oturumu başlat ve anonimleştirilmiş kod göster."""
+    """Start new interview session and show anonymized code."""
     from codedna.interview import select_candidate_file, generate_questions, start_session
     from codedna.plan import is_feature_available
 
     if not is_feature_available("interview_tool"):
         console.print(
             Panel(
-                "[bold yellow]🔒 Bu özellik Enterprise planında mevcut.[/bold yellow]\n"
-                "[dim]Yükseltmek için:[/dim] [cyan]codedna plan activate <LICENSE_KEY>[/cyan]",
+                "[bold yellow]🔒 This feature is available on Enterprise plan.[/bold yellow]\n"
+                "[dim]To upgrade:[/dim] [cyan]codedna plan activate <LICENSE_KEY>[/cyan]",
                 border_style="yellow",
             )
         )
         raise typer.Exit(1)
 
-    kok = repo or find_git_root() or Path.cwd()
-    db_yolu = _get_db(kok)
-    init_db(db_yolu)
+    root = repo or find_git_root() or Path.cwd()
+    db_path = _get_db(root)
+    init_db(db_path)
 
     console.print()
     console.print(
-        "[dim]⚠️  Bu araç insan değerlendirmesinin YERİNE GEÇMEZ — tamamlayıcı bir sinyaldir.[/dim]\n"
+        "[dim]⚠️  This tool does NOT replace human evaluation — it is a supplementary signal.[/dim]\n"
     )
 
-    with console.status("[dim]Uygun dosya seçiliyor...[/dim]"):
-        dosya = select_candidate_file(kok, db_yolu, difficulty)
+    with console.status("[dim]Selecting a suitable file...[/dim]"):
+        file = select_candidate_file(root, db_path, difficulty)
 
-    if not dosya:
-        console.print(f"[yellow]'{difficulty}' zorluğunda uygun dosya bulunamadı.[/yellow]")
+    if not file:
+        console.print(f"[yellow]No suitable file found for difficulty '{difficulty}'.[/yellow]")
         raise typer.Exit(1)
 
-    sorular = generate_questions(dosya.anonimlestirilmis_kod)
-    session_id = start_session(candidate, dosya.dosya_yolu, sorular, db_yolu)
+    questions = generate_questions(file.anonymized_code)
+    session_id = start_session(candidate, file.file_path, questions, db_path)
 
     console.print(
         Panel(
-            f"[bold]Aday:[/bold] {candidate}\n"
-            f"[bold]Zorluk:[/bold] {difficulty} · [dim]Karmaşıklık:[/dim] {dosya.karmasiklik_skoru:.0f} · [dim]Satır:[/dim] {dosya.satir_sayisi}\n"
-            f"[bold]Oturum ID:[/bold] [cyan]#{session_id}[/cyan]",
-            title="[bold cyan]🎯 Mülakat Başladı[/bold cyan]",
+            f"[bold]Candidate:[/bold] {candidate}\n"
+            f"[bold]Difficulty:[/bold] {difficulty} · [dim]Complexity:[/dim] {file.complexity_score:.0f} · [dim]Lines:[/dim] {file.line_count}\n"
+            f"[bold]Session ID:[/bold] [cyan]#{session_id}[/cyan]",
+            title="[bold cyan]🎯 Interview Started[/bold cyan]",
             border_style="cyan",
             padding=(1, 2),
         )
     )
 
-    console.print("\n[bold]─── Anonimleştirilmiş Kod ───[/bold]")
-    console.print(f"[dim]{dosya.anonimlestirilmis_kod[:800]}[/dim]")
-    if len(dosya.anonimlestirilmis_kod) > 800:
-        console.print("[dim]... (kısaltıldı)[/dim]")
+    console.print("\n[bold]─── Anonymized Code ───[/bold]")
+    console.print(f"[dim]{file.anonymized_code[:800]}[/dim]")
+    if len(file.anonymized_code) > 800:
+        console.print("[dim]... (truncated)[/dim]")
 
-    console.print("\n[bold]─── Sorular ───[/bold]")
-    for i, soru in enumerate(sorular, 1):
-        console.print(f"  [bold cyan]{i}.[/bold cyan] {soru}")
+    console.print("\n[bold]─── Questions ───[/bold]")
+    for i, question in enumerate(questions, 1):
+        console.print(f"  [bold cyan]{i}.[/bold cyan] {question}")
 
     console.print(
-        f"\n[dim]Değerlendirme için:[/dim] [cyan]codedna interview score {session_id} --score 4.0 --notes 'Not'[/cyan]\n"
+        f"\n[dim]To score:[/dim] [cyan]codedna interview score {session_id} --score 4.0 --notes 'Note'[/cyan]\n"
     )
 
 
 @interview_app.command("list")
 def interview_list(
-    repo: Optional[Path] = typer.Option(None, "--repo", "-r", help="Git repo dizini"),
-    limit: int = typer.Option(10, "--limit", "-n", help="Gösterilecek oturum sayısı"),
+    repo: Optional[Path] = typer.Option(None, "--repo", "-r", help="Git repo directory"),
+    limit: int = typer.Option(10, "--limit", "-n", help="Number of sessions to show"),
 ) -> None:
-    """Geçmiş mülakat oturumlarını göster."""
+    """Show historical interview sessions."""
     from codedna.interview import get_sessions
     from codedna.plan import is_feature_available
 
     if not is_feature_available("interview_tool"):
-        console.print("[bold yellow]🔒 Bu özellik Enterprise planında mevcut.[/bold yellow]")
+        console.print("[bold yellow]🔒 This feature is available on Enterprise plan.[/bold yellow]")
         raise typer.Exit(1)
 
-    kok = repo or find_git_root() or Path.cwd()
-    db_yolu = _get_db(kok)
-    init_db(db_yolu)
+    root = repo or find_git_root() or Path.cwd()
+    db_path = _get_db(root)
+    init_db(db_path)
 
-    oturumlar = get_sessions(db_yolu, limit=limit)
-    if not oturumlar:
-        console.print("[yellow]Henüz mülakat oturumu yok.[/yellow]")
+    sessions = get_sessions(db_path, limit=limit)
+    if not sessions:
+        console.print("[yellow]No interview sessions yet.[/yellow]")
         return
 
-    tablo = Table(
-        title="[bold cyan]🎯 Mülakat Geçmişi[/bold cyan]",
+    table = Table(
+        title="[bold cyan]🎯 Interview History[/bold cyan]",
         border_style="dim", show_lines=True, header_style="bold",
     )
-    tablo.add_column("#", justify="right", min_width=4)
-    tablo.add_column("Aday", min_width=16)
-    tablo.add_column("Başlangıç", min_width=17)
-    tablo.add_column("Skor", justify="center", min_width=8)
-    tablo.add_column("Notlar", min_width=20)
+    table.add_column("#", justify="right", min_width=4)
+    table.add_column("Candidate", min_width=16)
+    table.add_column("Start Time", min_width=17)
+    table.add_column("Score", justify="center", min_width=8)
+    table.add_column("Notes", min_width=20)
 
-    for o in oturumlar:
-        skor_str = f"{o['skor']:.1f}/5" if o["skor"] is not None else "[dim]—[/dim]"
-        tablo.add_row(
+    for o in sessions:
+        score_str = f"{o['skor']:.1f}/5" if o["skor"] is not None else "[dim]—[/dim]"
+        table.add_row(
             str(o["id"]),
-            o["aday"] or "?",
-            o["baslangic"] or "?",
-            skor_str,
-            (o["notlar"] or "")[:30],
+            o["candidate"] or o.get("aday") or "?",
+            o["start_time"] or o.get("start_date") or "?",
+            score_str,
+            (o["notes"] or o.get("notlar") or "")[:30],
         )
 
     console.print()
-    console.print(tablo)
+    console.print(table)
     console.print()
 
 
 @interview_app.command("score")
 def interview_score(
-    session_id: int = typer.Argument(..., help="Oturum ID'si"),
-    score: float = typer.Option(..., "--score", "-s", help="0.0–5.0 arası puan"),
-    notes: str = typer.Option("", "--notes", "-n", help="Değerlendirici notları"),
-    repo: Optional[Path] = typer.Option(None, "--repo", "-r", help="Git repo dizini"),
+    session_id: int = typer.Argument(..., help="Session ID"),
+    score: float = typer.Option(..., "--score", "-s", help="Score between 0.0 and 5.0"),
+    notes: str = typer.Option("", "--notes", "-n", help="Evaluator notes"),
+    repo: Optional[Path] = typer.Option(None, "--repo", "-r", help="Git repo directory"),
 ) -> None:
-    """Mülakat oturumuna insan değerlendirmesi puanı ekle."""
+    """Add a human review score to an interview session."""
     from codedna.interview import submit_score
     from codedna.plan import is_feature_available
 
     if not is_feature_available("interview_tool"):
-        console.print("[bold yellow]🔒 Bu özellik Enterprise planında mevcut.[/bold yellow]")
+        console.print("[bold yellow]🔒 This feature is available on Enterprise plan.[/bold yellow]")
         raise typer.Exit(1)
 
-    kok = repo or find_git_root() or Path.cwd()
-    db_yolu = _get_db(kok)
+    root = repo or find_git_root() or Path.cwd()
+    db_path = _get_db(root)
 
     try:
-        sonuc = submit_score(session_id, score, notes, db_yolu)
+        result = submit_score(session_id, score, notes, db_path)
         console.print(
-            f"[green]✓[/green] Değerlendirme kaydedildi: "
-            f"Oturum [cyan]#{session_id}[/cyan] → [bold]{score:.1f}/5[/bold]"
+            f"[green]✓[/green] Evaluation saved: "
+            f"Session [cyan]#{session_id}[/cyan] → [bold]{score:.1f}/5[/bold]"
         )
         if notes:
-            console.print(f"  [dim]Not:[/dim] {notes}")
+            console.print(f"  [dim]Note:[/dim] {notes}")
     except ValueError as e:
-        console.print(f"[bold red]Hata:[/bold red] {e}")
+        console.print(f"[bold red]Error:[/bold red] {e}")
         raise typer.Exit(1)
 
 
@@ -1056,89 +1081,89 @@ def interview_score(
 # ---------------------------------------------------------------------------
 @app.command(name="bus-factor")
 def bus_factor(
-    repo: Optional[Path] = typer.Option(None, "--repo", "-r", help="Git repo dizini"),
-    critical: bool = typer.Option(False, "--critical", "-c", help="Sadece kritik (bus_factor=1) dosyaları göster"),
-    max_files: int = typer.Option(500, "--max", "-m", help="İşlenecek maksimum dosya sayısı"),
+    repo: Optional[Path] = typer.Option(None, "--repo", "-r", help="Git repo directory"),
+    critical: bool = typer.Option(False, "--critical", "-c", help="Show only critical files (bus_factor=1)"),
+    max_files: int = typer.Option(500, "--max", "-m", help="Maximum number of files to process"),
 ) -> None:
-    """Repo genelinde bus factor analizi yap ve kritik sahiplik risklerini göster."""
-    from codedna.bus_factor import calculate_bus_factor, get_at_risk_files, _BUYUK_REPO_ESIGI
+    """Run repo-wide bus factor analysis and show critical ownership risks."""
+    from codedna.bus_factor import calculate_bus_factor, get_at_risk_files, _LARGE_REPO_THRESHOLD
     from codedna.plan import is_feature_available
 
-    # Plan kontrolü
+        # Plan check
     if not is_feature_available("bus_factor"):
         console.print(
             Panel(
-                "[bold yellow]🔒 Bu özellik Team planında mevcut.[/bold yellow]\n"
+                "[bold yellow]🔒 This feature is available on Team plan.[/bold yellow]\n"
                 "[dim]This feature is available on Team plan.[/dim]\n\n"
-                "[dim]Yükseltmek için:[/dim] [cyan]codedna plan activate <LICENSE_KEY>[/cyan]",
+                "[dim]To upgrade:[/dim] [cyan]codedna plan activate <LICENSE_KEY>[/cyan]",
                 border_style="yellow",
                 padding=(1, 2),
             )
         )
         raise typer.Exit(1)
 
-    kok = repo or find_git_root() or Path.cwd()
-    db_yolu = _get_db(kok)
-    init_db(db_yolu)
+    root = repo or find_git_root() or Path.cwd()
+    db_path = _get_db(root)
+    init_db(db_path)
 
-    if max_files > _BUYUK_REPO_ESIGI:
+    if max_files > _LARGE_REPO_THRESHOLD:
         console.print(
-            f"[yellow]⚠[/yellow]  {max_files} dosya taranacak — büyük repolar için yavaş olabilir."
+            f"[yellow]⚠[/yellow]  {max_files} files will be scanned — may be slow for large repos."
         )
 
     console.print()
-    console.print("[bold cyan]🧬 CodeDNA[/bold cyan] — Bus Factor analizi çalışıyor...\n")
+    console.print("[bold cyan]🧬 CodeDNA[/bold cyan] — Bus Factor analysis running...\n")
 
-    with console.status("[dim]git blame çalıştırılıyor...[/dim]"):
+    with console.status("[dim]Running git blame...[/dim]"):
         if critical:
-            sonuclar = get_at_risk_files(kok, db_yolu)
+            results = get_at_risk_files(root, db_path)
         else:
-            sonuclar = calculate_bus_factor(kok, db_yolu, max_dosya=max_files)
+            results = calculate_bus_factor(root, db_path, max_files=max_files)
 
-    if not sonuclar:
-        console.print("[yellow]Analiz edilecek dosya bulunamadı.[/yellow]")
+    if not results:
+        console.print("[yellow]No files found to analyze.[/yellow]")
         return
 
-    # Tablo
-    tablo = Table(
+    # Table
+    table = Table(
         title="",
         border_style="dim",
         show_lines=True,
         header_style="bold",
     )
-    tablo.add_column("Dosya", style="white", min_width=30)
-    tablo.add_column("Bus Factor", justify="center", min_width=11)
-    tablo.add_column("Ana Sahip", min_width=16)
-    tablo.add_column("Sahiplik %", justify="right", min_width=11)
-    tablo.add_column("Risk", justify="center", min_width=10)
+    table.add_column("File", style="white", min_width=30)
+    table.add_column("Bus Factor", justify="center", min_width=11)
+    table.add_column("Primary Owner", min_width=16)
+    table.add_column("Ownership %", justify="right", min_width=11)
+    table.add_column("Risk", justify="center", min_width=10)
 
-    kritik_sayisi = 0
-    for s in sonuclar:
+    critical_count = 0
+    for s in results:
         bf_str = str(s.bus_factor)
-        if s.risk == "KRİTİK":
-            bf_goster = f"[red]🚌 {bf_str}[/red]"
-            risk_goster = "[bold red]KRİTİK[/bold red]"
-            kritik_sayisi += 1
-        elif s.risk == "RİSKLİ":
-            bf_goster = f"[yellow]🚌 {bf_str}[/yellow]"
-            risk_goster = "[yellow]RİSKLİ[/yellow]"
+        if s.risk == "CRITICAL":
+            bf_display = f"[red]🚌 {bf_str}[/red]"
+            risk_display = "[bold red]CRITICAL[/bold red]"
+            critical_count += 1
+        elif s.risk == "RISKY":
+            bf_display = f"[yellow]🚌 {bf_str}[/yellow]"
+            risk_display = "[yellow]RISKY[/yellow]"
         else:
-            bf_goster = f"[green]🚌 {bf_str}[/green]"
-            risk_goster = "[green]GÜVENLİ[/green]"
+            bf_display = f"[green]🚌 {bf_str}[/green]"
+            risk_display = "[green]SAFE[/green]"
 
-        tablo.add_row(
-            s.dosya_yolu,
-            bf_goster,
-            s.birincil_sahip or "?",
-            f"%{s.sahiplik_yuzdesi:.1f}",
-            risk_goster,
+        table.add_row(
+            s.file_path,
+            bf_display,
+            s.primary_owner or "?",
+            f"%{s.ownership_percentage:.1f}",
+            risk_display,
         )
 
-    console.print(tablo)
+    console.print(table)
     console.print(
-        f"\n[bold]Özet:[/bold] {len(sonuclar)} dosya · "
-        f"[red]{kritik_sayisi} kritik[/red] · "
-        f"[dim]Eşik: anlama skoru ≥ 3.5[/dim]\n"
+        f"\n[bold]Summary:[/bold] {len(results)} files · "
+        f"[red]{critical_count} critical[/red] · "
+        f"[dim]Threshold: understanding score ≥ 3.5[/dim]\n"
     )
 
 
@@ -1147,119 +1172,118 @@ def bus_factor(
 # ---------------------------------------------------------------------------
 @app.command()
 def debt(
-    repo: Optional[Path] = typer.Option(None, "--repo", "-r", help="Git repo dizini"),
-    rate: float = typer.Option(75.0, "--rate", help="Saatlik maliyet ($/saat)"),
-    file: Optional[Path] = typer.Option(None, "--file", "-f", help="Tek dosya analizi"),
+    repo: Optional[Path] = typer.Option(None, "--repo", "-r", help="Git repo directory"),
+    rate: float = typer.Option(75.0, "--rate", help="Hourly rate ($/hour)"),
+    file: Optional[Path] = typer.Option(None, "--file", "-f", help="Single file analysis"),
 ) -> None:
-    """Repo genelinde teknik borç maliyeti hesapla."""
+    """Calculate repo-wide technical debt cost."""
     from codedna.tech_debt import calculate_repo_debt, calculate_file_debt
     from codedna.plan import get_current_plan, Plan
 
-    kok = repo or find_git_root() or Path.cwd()
-    db_yolu = _get_db(kok)
-    init_db(db_yolu)
+    root = repo or find_git_root() or Path.cwd()
+    db_path = _get_db(root)
+    init_db(db_path)
 
-    mevcut_plan = get_current_plan()
-    dolar_gizli = mevcut_plan == Plan.FREE  # Free planda dolar tutarı gizli
+    current_plan = get_current_plan()
+    dollar_hidden = current_plan == Plan.FREE  # Dollar amounts hidden on Free plan
 
     console.print()
-    console.print("[bold cyan]🧬 CodeDNA[/bold cyan] — Teknik borç hesaplanıyor...\n")
+    console.print("[bold cyan]🧬 CodeDNA[/bold cyan] — Calculating technical debt...\n")
 
-    # Tek dosya modu
+    # Single file mode
     if file:
-        # Göreli yolu tam yola çevir
-        tam_dosya = (kok / file).resolve() if not file.is_absolute() else file
-        with console.status("[dim]Analiz ediliyor...[/dim]"):
-            borc = calculate_file_debt(str(tam_dosya), db_yolu, hourly_rate=rate)
+        # Convert relative path to absolute
+        full_file = (root / file).resolve() if not file.is_absolute() else file
+        with console.status("[dim]Analyzing...[/dim]"):
+            debt = calculate_file_debt(str(full_file), db_path, hourly_rate=rate)
 
-        if not borc:
-            console.print(f"[yellow]Uyarı:[/yellow] '{file}' için veri bulunamadı.")
+        if not debt:
+            console.print(f"[yellow]Warning:[/yellow] No data found for '{file}'.")
             return
 
-        risk_renk = {"KRİTİK": "red", "YÜKSEK": "yellow", "ORTA": "yellow", "DÜŞÜK": "green"}.get(
-            borc.risk_seviyesi, "white"
+        risk_color = {"CRITICAL": "red", "HIGH": "yellow", "MEDIUM": "yellow", "LOW": "green"}.get(
+            debt.risk_level, "white"
         )
-        maliyet_str = (
-            f"[dim]Pro+ plan gerekli[/dim]"
-            if dolar_gizli
-            else f"[bold green]${borc.aylik_maliyet_usd:.2f}/ay[/bold green]"
+        cost_str = (
+            f"[dim]Pro+ plan required[/dim]"
+            if dollar_hidden
+            else f"[bold green]${debt.monthly_cost_usd:.2f}/month[/bold green]"
         )
 
         console.print(
             Panel(
-                f"[bold]Dosya:[/bold] [dim]{borc.dosya_yolu}[/dim]\n"
-                f"[bold]Borç saati:[/bold] {borc.debt_saatleri:.1f} saat\n"
-                f"[bold]Aylık maliyet:[/bold] {maliyet_str}\n"
-                f"[bold]Risk:[/bold] [{risk_renk}]{borc.risk_seviyesi}[/{risk_renk}]\n"
-                f"[bold]AI olasılığı:[/bold] %{borc.ai_olasiligi*100:.0f} · "
-                f"[bold]Karmaşıklık:[/bold] {borc.karmasiklik:.0f} · "
-                f"[bold]Satır:[/bold] {borc.toplam_satir}",
-                title="[bold cyan]💰 Teknik Borç — Dosya Detayı[/bold cyan]",
+                f"[bold]File:[/bold] [dim]{debt.file_path}[/dim]\n"
+                f"[bold]Debt hours:[/bold] {debt.debt_hours:.1f} hours\n"
+                f"[bold]Monthly cost:[/bold] {cost_str}\n"
+                f"[bold]Risk:[/bold] [{risk_color}]{debt.risk_level}[/{risk_color}]\n"
+                f"[bold]AI probability:[/bold] %{debt.ai_probability*100:.0f} · "
+                f"[bold]Complexity:[/bold] {debt.complexity:.0f} · "
+                f"[bold]Lines:[/bold] {debt.total_lines}",
+                title="[bold cyan]💰 Technical Debt — File Detail[/bold cyan]",
                 border_style="cyan",
                 padding=(1, 2),
             )
         )
         return
 
-    # Repo genel modu
-    with console.status("[dim]Tüm dosyalar analiz ediliyor...[/dim]"):
-        ozet = calculate_repo_debt(kok, db_yolu, hourly_rate=rate)
+    # Repo-wide mode
+    with console.status("[dim]Analyzing all files...[/dim]"):
+        summary = calculate_repo_debt(root, db_path, hourly_rate=rate)
 
-    maliyet_str = (
-        "[dim]🔒 Pro+ plan gerekli[/dim]"
-        if dolar_gizli
-        else f"[bold green]${ozet.toplam_aylik_maliyet_usd:.2f}/ay[/bold green]"
+    cost_str = (
+        "[dim]🔒 Pro+ plan required[/dim]"
+        if dollar_hidden
+        else f"[bold green]${summary.total_monthly_cost_usd:.2f}/month[/bold green]"
     )
 
     console.print(
         Panel(
-            f"[bold]💰 Teknik Borç Özeti[/bold]\n\n"
-            f"[bold]Toplam tahmini borç:[/bold] [cyan]{ozet.toplam_debt_saatleri:.1f} saat[/cyan]\n"
-            f"[bold]Aylık maliyet:[/bold] {maliyet_str}\n"
-            f"[bold]Saatlik ücret:[/bold] [dim]${rate:.0f}/saat[/dim]\n"
-            f"[bold]Analiz edilen dosya:[/bold] {ozet.toplam_dosya}",
+            f"[bold]💰 Technical Debt Summary[/bold]\n\n"
+            f"[bold]Total estimated debt:[/bold] [cyan]{summary.total_debt_hours:.1f} hours[/cyan]\n"
+            f"[bold]Monthly cost:[/bold] {cost_str}\n"
+            f"[bold]Hourly rate:[/bold] [dim]${rate:.0f}/hour[/dim]\n"
+            f"[bold]Files analyzed:[/bold] {summary.total_files}",
             border_style="cyan",
             padding=(1, 2),
         )
     )
 
-    if ozet.en_pahali_5:
-        console.print("[bold]En maliyetli 5 dosya:[/bold]")
-        tablo = Table(border_style="dim", show_lines=True, header_style="bold")
-        tablo.add_column("Dosya", style="white", min_width=30)
-        tablo.add_column("Borç Saati", justify="right", min_width=11)
-        tablo.add_column("Aylık", justify="right", min_width=10)
-        tablo.add_column("Risk", justify="center", min_width=10)
+    if summary.top_5_most_expensive:
+        console.print("[bold]Top 5 most expensive files:[/bold]")
+        table = Table(border_style="dim", show_lines=True, header_style="bold")
+        table.add_column("File", style="white", min_width=30)
+        table.add_column("Debt Hours", justify="right", min_width=11)
+        table.add_column("Monthly", justify="right", min_width=10)
+        table.add_column("Risk", justify="center", min_width=10)
 
-        for d in ozet.en_pahali_5:
-            risk_renk = {
-                "KRİTİK": "red", "YÜKSEK": "yellow",
-                "ORTA": "yellow", "DÜŞÜK": "green",
-            }.get(d.risk_seviyesi, "white")
+        for d in summary.top_5_most_expensive:
+            risk_color = {
+                "CRITICAL": "red", "HIGH": "yellow", "MEDIUM": "yellow", "LOW": "green",
+            }.get(d.risk_level, "white")
 
-            aylik = (
-                "[dim]gizli[/dim]"
-                if dolar_gizli
-                else f"[{risk_renk}]${d.aylik_maliyet_usd:.2f}[/{risk_renk}]"
+            monthly = (
+                "[dim]hidden[/dim]"
+                if dollar_hidden
+                else f"[{risk_color}]${d.monthly_cost_usd:.2f}[/{risk_color}]"
             )
 
-            # Dosya yolunu kısalt
+            # Shorten file path
             try:
-                goreceli = str(Path(d.dosya_yolu).relative_to(kok))
+                rel_path = str(Path(d.file_path).relative_to(root))
             except ValueError:
-                goreceli = d.dosya_yolu[-40:]
+                rel_path = d.file_path[-40:]
 
-            tablo.add_row(
-                goreceli,
-                f"{d.debt_saatleri:.1f} saat",
-                aylik,
-                f"[{risk_renk}]{d.risk_seviyesi}[/{risk_renk}]",
+            table.add_row(
+                rel_path,
+                f"{d.debt_hours:.1f} h",
+                monthly,
+                f"[{risk_color}]{d.risk_level}[/{risk_color}]",
             )
-        console.print(tablo)
+        console.print(table)
 
-    if dolar_gizli:
+    if dollar_hidden:
         console.print(
-            "\n[dim]💡 Dolar tutarları Pro+ planda görünür: [cyan]codedna plan activate <KEY>[/cyan][/dim]\n"
+            "\n[dim]💡 Dollar amounts are visible on Pro+: [cyan]codedna plan activate <KEY>[/cyan][/dim]\n"
         )
     else:
         console.print()
@@ -1268,18 +1292,18 @@ def debt(
 # ---------------------------------------------------------------------------
 # codedna sprint
 # ---------------------------------------------------------------------------
-sprint_app = typer.Typer(help="Sprint yönetimi ve sağlık skoru.")
+sprint_app = typer.Typer(help="Sprint management and health score.")
 app.add_typer(sprint_app, name="sprint")
 
 
 @sprint_app.command("create")
-def sprint_olustur(
-    name: str = typer.Option(..., "--name", "-n", help="Sprint ismi"),
-    start: str = typer.Option(..., "--start", "-s", help="Başlangıç tarihi (YYYY-MM-DD)"),
-    end: str = typer.Option(..., "--end", "-e", help="Bitiş tarihi (YYYY-MM-DD)"),
-    repo: Optional[Path] = typer.Option(None, "--repo", "-r", help="Git repo dizini"),
+def sprint_create(
+    name: str = typer.Option(..., "--name", "-n", help="Sprint name"),
+    start: str = typer.Option(..., "--start", "-s", help="Start date (YYYY-MM-DD)"),
+    end: str = typer.Option(..., "--end", "-e", help="End date (YYYY-MM-DD)"),
+    repo: Optional[Path] = typer.Option(None, "--repo", "-r", help="Git repo directory"),
 ) -> None:
-    """Yeni sprint oluştur ve sağlık skoru hesapla."""
+    """Create a new sprint and calculate the health score."""
     from datetime import datetime as dt
     from codedna.sprint_health import calculate_sprint_health, save_sprint_result
     from codedna.plan import is_feature_available
@@ -1287,171 +1311,171 @@ def sprint_olustur(
     if not is_feature_available("sprint_health"):
         console.print(
             Panel(
-                "[bold yellow]🔒 Bu özellik Team planında mevcut.[/bold yellow]\n"
+                "[bold yellow]🔒 This feature is available on Team plan.[/bold yellow]\n"
                 "[dim]This feature is available on Team plan.[/dim]\n\n"
-                "[dim]Yükseltmek için:[/dim] [cyan]codedna plan activate <LICENSE_KEY>[/cyan]",
+                "[dim]To upgrade:[/dim] [cyan]codedna plan activate <LICENSE_KEY>[/cyan]",
                 border_style="yellow",
                 padding=(1, 2),
             )
         )
         raise typer.Exit(1)
 
-    # Tarihleri parse et
+    # Parse dates
     try:
-        baslangic = dt.fromisoformat(start)
-        bitis = dt.fromisoformat(end)
+        start_date = dt.fromisoformat(start)
+        end_date = dt.fromisoformat(end)
     except ValueError:
-        console.print(f"[bold red]Hata:[/bold red] Geçersiz tarih formatı. Kullanım: YYYY-MM-DD")
+        console.print(f"[bold red]Error:[/bold red] Invalid date format. Usage: YYYY-MM-DD")
         raise typer.Exit(1)
 
-    if bitis <= baslangic:
-        console.print("[bold red]Hata:[/bold red] Bitiş tarihi başlangıçtan sonra olmalı.")
+    if end_date <= start_date:
+        console.print("[bold red]Error:[/bold red] End date must be after start date.")
         raise typer.Exit(1)
 
-    kok = repo or find_git_root() or Path.cwd()
-    db_yolu = _get_db(kok)
-    init_db(db_yolu)
+    root = repo or find_git_root() or Path.cwd()
+    db_path = _get_db(root)
+    init_db(db_path)
 
     console.print()
-    console.print(f"[bold cyan]🧬 CodeDNA[/bold cyan] — [bold]{name}[/bold] sprint analizi çalışıyor...\n")
+    console.print(f"[bold cyan]🧬 CodeDNA[/bold cyan] — [bold]{name}[/bold] sprint analysis running...\n")
 
-    with console.status("[dim]Commit'ler analiz ediliyor...[/dim]"):
-        sonuc = calculate_sprint_health(kok, db_yolu, baslangic, bitis, name)
+    with console.status("[dim]Analyzing commits...[/dim]"):
+        result = calculate_sprint_health(root, db_path, start_date, end_date, name)
 
-    sprint_id = save_sprint_result(sonuc, db_yolu)
+    sprint_id = save_sprint_result(result, db_path)
 
-    durum_renk = {
-        "SAĞLIKLI": "green", "DİKKAT": "yellow", "RİSKLİ": "red"
-    }.get(sonuc.durum, "white")
+    status_color = {
+        "HEALTHY": "green", "WARNING": "yellow", "RISKY": "red",
+    }.get(result.status, "white")
 
     console.print(
         Panel(
-            f"[bold]Sprint:[/bold] {sonuc.sprint_adi}\n"
-            f"[bold]Tarih:[/bold] {start} → {end}\n"
-            f"[bold]Sağlık Skoru:[/bold] [{durum_renk}]{sonuc.health_score:.1f}/100 ({sonuc.durum})[/{durum_renk}]\n"
-            f"[bold]Toplam Commit:[/bold] {sonuc.toplam_commit}\n"
-            f"[bold]Ort. Anlama:[/bold] {f'{sonuc.avg_understanding:.1f}/5' if sonuc.avg_understanding else 'Veri yok'}\n"
-            f"[bold]AI Oranı:[/bold] %{sonuc.ai_orani * 100:.0f} yüksek riskli\n"
-            f"[bold]Borç Delta:[/bold] {sonuc.debt_delta_saati:.1f} saat/commit",
-            title=f"[bold cyan]🏃 Sprint Sağlık Raporu — #{sprint_id}[/bold cyan]",
-            border_style=durum_renk,
+            f"[bold]Sprint:[/bold] {result.sprint_name}\n"
+            f"[bold]Date:[/bold] {start} → {end}\n"
+            f"[bold]Health Score:[/bold] [{status_color}]{result.health_score:.1f}/100 ({result.status})[/{status_color}]\n"
+            f"[bold]Total Commits:[/bold] {result.total_commits}\n"
+            f"[bold]Avg. Understanding:[/bold] {f'{result.avg_understanding:.1f}/5' if result.avg_understanding else 'No data'}\n"
+            f"[bold]AI Ratio:[/bold] {result.ai_ratio * 100:.0f}% high risk\n"
+            f"[bold]Debt Delta:[/bold] {result.debt_delta_hours:.1f} h/commit",
+            title=f"[bold cyan]🏃 Sprint Health Report — #{sprint_id}[/bold cyan]",
+            border_style=status_color,
             padding=(1, 2),
         )
     )
-    console.print(f"[dim]Sprint #{sprint_id} kaydedildi.[/dim]\n")
+    console.print(f"[dim]Sprint #{sprint_id} saved.[/dim]\n")
 
 
 @sprint_app.command("health")
-def sprint_sagligi(
-    repo: Optional[Path] = typer.Option(None, "--repo", "-r", help="Git repo dizini"),
+def sprint_health(
+    repo: Optional[Path] = typer.Option(None, "--repo", "-r", help="Git repo directory"),
 ) -> None:
-    """Son sprint'in sağlık skorunu göster."""
+    """Show the latest sprint health score."""
     from codedna.db import get_latest_sprint
     from codedna.plan import is_feature_available
 
     if not is_feature_available("sprint_health"):
         console.print(
             Panel(
-                "[bold yellow]🔒 Bu özellik Team planında mevcut.[/bold yellow]\n"
-                "[dim]Yükseltmek için:[/dim] [cyan]codedna plan activate <LICENSE_KEY>[/cyan]",
+                "[bold yellow]🔒 This feature is available on Team plan.[/bold yellow]\n"
+                "[dim]To upgrade:[/dim] [cyan]codedna plan activate <LICENSE_KEY>[/cyan]",
                 border_style="yellow",
             )
         )
         raise typer.Exit(1)
 
-    kok = repo or find_git_root() or Path.cwd()
-    db_yolu = _get_db(kok)
-    init_db(db_yolu)
+    root = repo or find_git_root() or Path.cwd()
+    db_path = _get_db(root)
+    init_db(db_path)
 
-    sprint = get_latest_sprint(db_path=db_yolu)
+    sprint = get_latest_sprint(db_path=db_path)
     if not sprint:
-        console.print("[yellow]Henüz kayıtlı sprint yok.[/yellow]")
-        console.print("[dim]Oluşturmak için:[/dim] [cyan]codedna sprint create --name 'Sprint 1' --start 2026-06-01 --end 2026-06-14[/cyan]")
+        console.print("[yellow]No sprints recorded yet.[/yellow]")
+        console.print("[dim]To create one:[/dim] [cyan]codedna sprint create --name 'Sprint 1' --start 2026-06-01 --end 2026-06-14[/cyan]")
         return
 
-    skor = sprint["health_score"] or 0.0
-    durum = "SAĞLIKLI" if skor >= 80 else "DİKKAT" if skor >= 50 else "RİSKLİ"
-    durum_renk = {"SAĞLIKLI": "green", "DİKKAT": "yellow", "RİSKLİ": "red"}[durum]
+    score = sprint["health_score"] or 0.0
+    status = "HEALTHY" if score >= 80 else "WARNING" if score >= 50 else "RISKY"
+    status_color = {"HEALTHY": "green", "WARNING": "yellow", "RISKY": "red"}[status]
 
     from datetime import datetime as dt
-    bas = dt.fromtimestamp(sprint["start_date"]).strftime("%Y-%m-%d") if sprint["start_date"] else "?"
-    bit = dt.fromtimestamp(sprint["end_date"]).strftime("%Y-%m-%d") if sprint["end_date"] else "?"
+    start_str = dt.fromtimestamp(sprint["start_date"]).strftime("%Y-%m-%d") if sprint["start_date"] else "?"
+    end_str = dt.fromtimestamp(sprint["end_date"]).strftime("%Y-%m-%d") if sprint["end_date"] else "?"
 
-    anlama_val = sprint["avg_understanding"]
-    anlama_str = f"{anlama_val:.1f}/5" if anlama_val else "Veri yok"
+    understanding_val = sprint["avg_understanding"]
+    understanding_str = f"{understanding_val:.1f}/5" if understanding_val else "No data"
     delta_val = sprint["debt_delta_hours"] or 0.0
 
     console.print()
     console.print(
         Panel(
             f"[bold]Sprint:[/bold] {sprint['sprint_name']}\n"
-            f"[bold]Tarih:[/bold] {bas} → {bit}\n"
-            f"[bold]Sağlık Skoru:[/bold] [{durum_renk}]{skor:.1f}/100 ({durum})[/{durum_renk}]\n"
-            f"[bold]Ort. Anlama:[/bold] {anlama_str}\n"
-            f"[bold]Borç Delta:[/bold] {delta_val:.1f} saat/commit",
-            title="[bold cyan]🏃 Son Sprint Sağlığı[/bold cyan]",
-            border_style=durum_renk,
+            f"[bold]Date:[/bold] {start_str} → {end_str}\n"
+            f"[bold]Health Score:[/bold] [{status_color}]{score:.1f}/100 ({status})[/{status_color}]\n"
+            f"[bold]Avg. Understanding:[/bold] {understanding_str}\n"
+            f"[bold]Debt Delta:[/bold] {delta_val:.1f} h/commit",
+            title="[bold cyan]🏃 Latest Sprint Health[/bold cyan]",
+            border_style=status_color,
             padding=(1, 2),
         )
     )
 
 
 @sprint_app.command("history")
-def sprint_gecmisi(
-    repo: Optional[Path] = typer.Option(None, "--repo", "-r", help="Git repo dizini"),
-    limit: int = typer.Option(10, "--limit", "-n", help="Gösterilecek sprint sayısı"),
+def sprint_history(
+    repo: Optional[Path] = typer.Option(None, "--repo", "-r", help="Git repo directory"),
+    limit: int = typer.Option(10, "--limit", "-n", help="Number of sprints to show"),
 ) -> None:
-    """Geçmiş sprint'leri tablo olarak göster."""
-    from codedna.db import get_sprint_history as db_sprint_gecmisi
+    """Show past sprints as a table."""
+    from codedna.db import get_sprint_history as db_sprint_history
     from codedna.plan import is_feature_available
     from datetime import datetime as dt
 
     if not is_feature_available("sprint_health"):
-        console.print("[bold yellow]🔒 Bu özellik Team planında mevcut.[/bold yellow]")
+        console.print("[bold yellow]🔒 This feature is available on Team plan.[/bold yellow]")
         raise typer.Exit(1)
 
-    kok = repo or find_git_root() or Path.cwd()
-    db_yolu = _get_db(kok)
-    init_db(db_yolu)
+    root = repo or find_git_root() or Path.cwd()
+    db_path = _get_db(root)
+    init_db(db_path)
 
-    sprintler = db_sprint_gecmisi(limit=limit, db_path=db_yolu)
-    if not sprintler:
-        console.print("[yellow]Henüz kayıtlı sprint yok.[/yellow]")
+    sprints = db_sprint_history(limit=limit, db_path=db_path)
+    if not sprints:
+        console.print("[yellow]No sprints recorded yet.[/yellow]")
         return
 
-    tablo = Table(
-        title=f"[bold cyan]🏃 Sprint Geçmişi — Son {len(sprintler)}[/bold cyan]",
+    table = Table(
+        title=f"[bold cyan]🏃 Sprint History — Last {len(sprints)}[/bold cyan]",
         border_style="dim",
         show_lines=True,
         header_style="bold",
     )
-    tablo.add_column("Sprint", min_width=16)
-    tablo.add_column("Tarih Aralığı", min_width=22)
-    tablo.add_column("Sağlık", justify="center", min_width=14)
-    tablo.add_column("Anlama", justify="center", min_width=10)
-    tablo.add_column("Borç Delta", justify="right", min_width=11)
+    table.add_column("Sprint", min_width=16)
+    table.add_column("Date Range", min_width=22)
+    table.add_column("Health", justify="center", min_width=14)
+    table.add_column("Understanding", justify="center", min_width=10)
+    table.add_column("Debt Delta", justify="right", min_width=11)
 
-    for s in sprintler:
-        skor = s["health_score"] or 0.0
-        durum = "SAĞLIKLI" if skor >= 80 else "DİKKAT" if skor >= 50 else "RİSKLİ"
-        renk = {"SAĞLIKLI": "green", "DİKKAT": "yellow", "RİSKLİ": "red"}[durum]
+    for s in sprints:
+        score = s["health_score"] or 0.0
+        status = "HEALTHY" if score >= 80 else "WARNING" if score >= 50 else "RISKY"
+        color = {"HEALTHY": "green", "WARNING": "yellow", "RISKY": "red"}[status]
 
-        bas = dt.fromtimestamp(s["start_date"]).strftime("%Y-%m-%d") if s["start_date"] else "?"
-        bit = dt.fromtimestamp(s["end_date"]).strftime("%Y-%m-%d") if s["end_date"] else "?"
+        start_str = dt.fromtimestamp(s["start_date"]).strftime("%Y-%m-%d") if s["start_date"] else "?"
+        end_str = dt.fromtimestamp(s["end_date"]).strftime("%Y-%m-%d") if s["end_date"] else "?"
 
-        anlama_str = f"{s['avg_understanding']:.1f}/5" if s["avg_understanding"] else "—"
-        delta_str = f"{s['debt_delta_hours']:.1f}s" if s["debt_delta_hours"] else "—"
+        understanding_str = f"{s['avg_understanding']:.1f}/5" if s["avg_understanding"] else "—"
+        delta_str = f"{s['debt_delta_hours']:.1f}h" if s["debt_delta_hours"] else "—"
 
-        tablo.add_row(
+        table.add_row(
             s["sprint_name"] or "?",
-            f"{bas} → {bit}",
-            f"[{renk}]{skor:.0f}/100 {durum}[/{renk}]",
-            anlama_str,
+            f"{start_str} → {end_str}",
+            f"[{color}]{score:.0f}/100 {status}[/{color}]",
+            understanding_str,
             delta_str,
         )
 
     console.print()
-    console.print(tablo)
+    console.print(table)
     console.print()
 
 
@@ -1460,21 +1484,21 @@ def sprint_gecmisi(
 # ---------------------------------------------------------------------------
 @app.command()
 def plan(
-    komut: Optional[str] = typer.Argument(
+    command: Optional[str] = typer.Argument(
         None,
-        help="'activate' veya doğrudan lisans anahtarı",
+        help="'activate' or direct license key",
     ),
-    anahtar: Optional[str] = typer.Argument(
+    key: Optional[str] = typer.Argument(
         None,
-        help="Lisans anahtarı (activate ile birlikte kullanılır)",
+        help="License key (used with activate)",
     ),
 ) -> None:
-    """Mevcut planı göster veya lisans anahtarı ile plan aktif et.
+    """Show current plan or activate a plan with a license key.
 
-    Kullanım:
-      codedna plan                       # mevcut planı göster
-      codedna plan activate <KEY>        # lisans aktif et
-      codedna plan <KEY>                 # kısa yol
+    Usage:
+      codedna plan                       # show current plan
+      codedna plan activate <KEY>        # activate license
+      codedna plan <KEY>                 # shortcut
     """
     from codedna.plan import (
         Plan as PlanEnum,
@@ -1483,70 +1507,70 @@ def plan(
         get_plan_limits,
     )
 
-    # "activate <KEY>" veya doğrudan "<KEY>" syntax'ı destekle
-    lisans_anahtari: Optional[str] = None
-    if komut == "activate" and anahtar:
-        lisans_anahtari = anahtar
-    elif komut and komut != "activate":
-        lisans_anahtari = komut
+    # Support "activate <KEY>" or direct "<KEY>" syntax
+    license_key: Optional[str] = None
+    if command == "activate" and key:
+        license_key = key
+    elif command and command != "activate":
+        license_key = command
 
-    if lisans_anahtari:
-        # Lisans aktifleştirme
+    if license_key:
+        # Activate license
         try:
-            aktif_plan = activate_license(lisans_anahtari)
+            activated_plan = activate_license(license_key)
             console.print(
                 Panel(
-                    f"[bold green]✓ Lisans aktif edildi![/bold green]\n\n"
-                    f"[bold]Plan:[/bold] [cyan]{aktif_plan.value.upper()}[/cyan]\n"
-                    f"[bold]Anahtar:[/bold] [dim]{lisans_anahtari[:12]}...[/dim]",
+                    f"[bold green]✓ License activated![/bold green]\n\n"
+                    f"[bold]Plan:[/bold] [cyan]{activated_plan.value.upper()}[/cyan]\n"
+                    f"[bold]Key:[/bold] [dim]{license_key[:12]}...[/dim]",
                     border_style="green",
                     padding=(1, 2),
                 )
             )
         except ValueError as e:
-            console.print(f"[bold red]Hata:[/bold red] {e}")
+            console.print(f"[bold red]Error:[/bold red] {e}")
             raise typer.Exit(1)
         return
 
-    # Mevcut planı göster
-    mevcut = get_current_plan()
-    limitler = get_plan_limits()
+    # Show current plan
+    current = get_current_plan()
+    limits = get_plan_limits()
 
-    plan_renk = {
+    plan_color = {
         PlanEnum.FREE: "dim",
         PlanEnum.PRO: "cyan",
         PlanEnum.TEAM: "green",
         PlanEnum.ENTERPRISE: "yellow",
-    }.get(mevcut, "white")
+    }.get(current, "white")
 
-    tablo = Table(border_style="dim", show_header=False, padding=(0, 1))
-    tablo.add_column("Özellik", style="dim")
-    tablo.add_column("Değer", style="white")
+    table = Table(border_style="dim", show_header=False, padding=(0, 1))
+    table.add_column("Feature", style="dim")
+    table.add_column("Value", style="white")
 
-    for k, v in limitler.items():
+    for k, v in limits.items():
         if isinstance(v, bool):
-            goster = "[green]✓[/green]" if v else "[red]✗[/red]"
+            display = "[green]✓[/green]" if v else "[red]✗[/red]"
         elif isinstance(v, int) and v == -1:
-            goster = "[dim]Sınırsız[/dim]"
+            display = "[dim]Unlimited[/dim]"
         else:
-            goster = str(v)
-        tablo.add_row(k.replace("_", " ").title(), goster)
+            display = str(v)
+        table.add_row(k.replace("_", " ").title(), display)
 
     console.print()
     console.print(
         Panel(
-            f"[bold]Mevcut Plan / Current Plan:[/bold] [{plan_renk}]{mevcut.value.upper()}[/{plan_renk}]\n\n"
+            f"[bold]Current Plan:[/bold] [{plan_color}]{current.value.upper()}[/{plan_color}]\n\n"
             + (
-                "[dim]Lisans aktif etmek için:[/dim] [cyan]codedna plan activate <LICENSE_KEY>[/cyan]"
-                if mevcut == PlanEnum.FREE
-                else "[dim]Yükseltmek için:[/dim] [cyan]codedna plan activate <LICENSE_KEY>[/cyan]"
+                "[dim]To activate a license:[/dim] [cyan]codedna plan activate <LICENSE_KEY>[/cyan]"
+                if current == PlanEnum.FREE
+                else "[dim]To upgrade:[/dim] [cyan]codedna plan activate <LICENSE_KEY>[/cyan]"
             ),
             title="[bold cyan]🧬 CodeDNA Plan[/bold cyan]",
             border_style="cyan",
             padding=(1, 2),
         )
     )
-    console.print(tablo)
+    console.print(table)
     console.print()
 
 
@@ -1555,54 +1579,54 @@ def plan(
 # ---------------------------------------------------------------------------
 @app.command()
 def dashboard(
-    api_port: int = typer.Option(8000, "--api-port", help="FastAPI port numarası"),
-    ui_port: int = typer.Option(3000, "--ui-port", help="Next.js dashboard port numarası"),
-    repo: Optional[Path] = typer.Option(None, "--repo", "-r", help="Git repo dizini"),
+    api_port: int = typer.Option(8000, "--api-port", help="FastAPI port number"),
+    ui_port: int = typer.Option(3000, "--ui-port", help="Next.js dashboard port number"),
+    repo: Optional[Path] = typer.Option(None, "--repo", "-r", help="Git repo directory"),
 ) -> None:
-    """FastAPI + Next.js dashboard'u başlat ve tarayıcıda aç."""
+    """Start FastAPI + Next.js dashboard and open in browser."""
     import os
     import subprocess
     import time
     import webbrowser
 
-    kok = repo or find_git_root() or Path.cwd()
-    db_yolu = _get_db(kok)
-    init_db(db_yolu)
+    root = repo or find_git_root() or Path.cwd()
+    db_path = _get_db(root)
+    init_db(db_path)
 
-    # dashboard/ klasörünü bul — CLI'nin bulunduğu yere göre veya CWD'ye göre
-    dashboard_yollari = [
+    # Find the dashboard/ folder — relative to CLI location or CWD
+    dashboard_paths = [
         Path(__file__).parent.parent / "dashboard",
         Path.cwd() / "dashboard",
-        kok / "dashboard",
+        root / "dashboard",
     ]
-    dashboard_kok = next((p for p in dashboard_yollari if (p / "package.json").exists()), None)
+    dashboard_root = next((p for p in dashboard_paths if (p / "package.json").exists()), None)
 
-    if not dashboard_kok:
+    if not dashboard_root:
         console.print(
-            "[bold red]Hata:[/bold red] dashboard/ klasörü bulunamadı.\n"
-            "[dim]codedna proje kökünde 'dashboard/' klasörü olmalı.[/dim]"
+            "[bold red]Error:[/bold red] dashboard/ folder not found.\n"
+            "[dim]A 'dashboard/' folder must exist in the codedna project root.[/dim]"
         )
         raise typer.Exit(1)
 
     console.print()
     console.print(
         Panel(
-            f"[bold cyan]🧬 CodeDNA Panosu[/bold cyan] başlatılıyor...\n\n"
+            f"[bold cyan]🧬 CodeDNA Dashboard[/bold cyan] starting...\n\n"
             f"[bold]API:[/bold]       [link]http://localhost:{api_port}[/link]\n"
             f"[bold]Dashboard:[/bold] [link]http://localhost:{ui_port}[/link]\n\n"
-            "[dim]Durdurmak için Ctrl+C[/dim]",
+            "[dim]Press Ctrl+C to stop[/dim]",
             border_style="cyan",
             padding=(1, 2),
         )
     )
 
-    # Ortam değişkenlerini ayarla
+    # Set environment variables
     env = os.environ.copy()
-    env["CODEDNA_REPO_PATH"] = str(kok)
-    env["CODEDNA_DB_PATH"] = str(db_yolu)
+    env["CODEDNA_REPO_PATH"] = str(root)
+    env["CODEDNA_DB_PATH"] = str(db_path)
     env["NEXT_PUBLIC_API_URL"] = f"http://localhost:{api_port}"
 
-    # FastAPI sürecini başlat — venv Python'unu kullan
+    # Start FastAPI process — use venv Python
     import sys
     python_bin = sys.executable
 
@@ -1618,8 +1642,8 @@ def dashboard(
         stderr=subprocess.DEVNULL,
     )
 
-    # Next.js npm run dev başlat — node_modules/.bin/next'i doğrudan çağır
-    next_bin = dashboard_kok / "node_modules" / ".bin" / "next"
+    # Start Next.js dev server — call node_modules/.bin/next directly
+    next_bin = dashboard_root / "node_modules" / ".bin" / "next"
     npm_cmd = str(next_bin) if next_bin.exists() else "npm"
     ui_cmd = (
         [npm_cmd, "dev", "--port", str(ui_port)]
@@ -1628,27 +1652,27 @@ def dashboard(
     )
     ui_proc = subprocess.Popen(
         ui_cmd,
-        cwd=str(dashboard_kok),
+        cwd=str(dashboard_root),
         env=env,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
 
-    # Başlaması için bekle, sonra tarayıcıyı aç
-    console.print("[dim]Sunucular başlatılıyor...[/dim]")
+    # Wait for startup, then open browser
+    console.print("[dim]Starting servers...[/dim]")
     time.sleep(4)
 
     try:
         webbrowser.open(f"http://localhost:{ui_port}")
-        console.print(f"[green]✓[/green] Tarayıcı açıldı: [link]http://localhost:{ui_port}[/link]")
-        console.print("[dim]Ctrl+C ile durdur[/dim]\n")
+        console.print(f"[green]✓[/green] Browser opened: [link]http://localhost:{ui_port}[/link]")
+        console.print("[dim]Press Ctrl+C to stop[/dim]\n")
 
-        # Her iki süreci bekle
+        # Wait for both processes
         api_proc.wait()
     except KeyboardInterrupt:
-        console.print("\n[yellow]Durduruluyor...[/yellow]")
+        console.print("\n[yellow]Shutting down...[/yellow]")
     finally:
-        # Her iki süreci de temizle
+        # Clean up both processes
         for proc in [api_proc, ui_proc]:
             try:
                 proc.terminate()
@@ -1658,7 +1682,7 @@ def dashboard(
                     proc.kill()
                 except Exception:
                     pass
-        console.print("[dim]CodeDNA durduruldu.[/dim]")
+        console.print("[dim]CodeDNA stopped.[/dim]")
 
 
 # ---------------------------------------------------------------------------
@@ -1666,45 +1690,45 @@ def dashboard(
 # ---------------------------------------------------------------------------
 @app.command()
 def uninstall(
-    repo: Optional[Path] = typer.Option(None, "--repo", "-r", help="Git repo dizini"),
+    repo: Optional[Path] = typer.Option(None, "--repo", "-r", help="Git repo directory"),
 ) -> None:
-    """CodeDNA hook'unu kaldır."""
-    kok = repo or find_git_root()
-    if uninstall_hook(kok):
-        console.print("[green]✓[/green] CodeDNA kaldırıldı.")
+    """Remove CodeDNA hook."""
+    root = repo or find_git_root()
+    if uninstall_hook(root):
+        console.print("[green]✓[/green] CodeDNA uninstalled.")
     else:
         raise typer.Exit(1)
 
 
 # ---------------------------------------------------------------------------
-# Yardımcı fonksiyonlar
+# Helper functions
 # ---------------------------------------------------------------------------
-def _kisalt_yol(tam_yol: str, kok: str) -> str:
-    """Uzun yolları repo köküne göre kısalt."""
+def _shorten_path(full_path: str, root: str) -> str:
+    """Shorten long paths relative to repo root."""
     try:
-        goreceli = Path(tam_yol).relative_to(Path(kok))
-        yol_str = str(goreceli)
-        if len(yol_str) > 40:
-            parcalar = Path(yol_str).parts
-            if len(parcalar) > 3:
-                return f".../{'/'.join(parcalar[-2:])}"
-        return yol_str
+        rel_path = Path(full_path).relative_to(Path(root))
+        path_str = str(rel_path)
+        if len(path_str) > 40:
+            parts = Path(path_str).parts
+            if len(parts) > 3:
+                return f".../{'/'.join(parts[-2:])}"
+        return path_str
     except ValueError:
-        return tam_yol[-40:] if len(tam_yol) > 40 else tam_yol
+        return full_path[-40:] if len(full_path) > 40 else full_path
 
 
-def _risk_etiketi(yuzde: float) -> tuple[str, str]:
-    """AI yüzdesine göre risk etiketi ve renk döndür."""
-    if yuzde >= 70:
-        return "YÜKSEK", "red"
-    elif yuzde >= 40:
-        return "ORTA", "yellow"
+def _risk_label(percentage: float) -> tuple[str, str]:
+    """Return risk label and color based on AI percentage."""
+    if percentage >= 70:
+        return "HIGH", "red"
+    elif percentage >= 40:
+        return "MEDIUM", "yellow"
     else:
-        return "DÜŞÜK", "green"
+        return "LOW", "green"
 
 
 def main() -> None:
-    """CLI giriş noktası."""
+    """CLI entry point."""
     app()
 
 

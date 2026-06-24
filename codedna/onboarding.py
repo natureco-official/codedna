@@ -1,4 +1,4 @@
-"""Yeni katılan geliştiricilerin üretkenlik eğrisini ölçer."""
+"""Measures the productivity ramp-up curve of new developers."""
 
 from __future__ import annotations
 
@@ -9,46 +9,46 @@ from typing import Optional
 
 from codedna.db import get_connection
 
-# Üretkenlik eşiği — bu skoru aşınca "ramp-up tamamlandı" sayılır
-_VARSAYILAN_ESIK = 3.5
+# Productivity threshold — crossing this score means "ramp-up complete"
+_DEFAULT_THRESHOLD = 3.5
 
-# Ramp-up tahmini için minimum commit sayısı
-_MIN_COMMIT = 5
+# Minimum number of commits required for ramp-up estimation
+_MIN_COMMITS = 5
 
 
 @dataclass
-class CommitNoktasi:
-    """Tek commit için anlama skoru verisi."""
+class CommitDataPoint:
+    """Understanding score data for a single commit."""
 
     commit_hash: str
-    commit_no: int           # yazar bazlı sıra numarası (1'den başlar)
-    tarih: datetime
+    commit_no: int           # author-relative sequence number (starts at 1)
+    date: datetime          # kept for API/chart compatibility (was: tarih)
     understanding_score: Optional[float]
-    hafta_no: int            # ilk committen itibaren geçen hafta sayısı
+    week_number: int            # weeks elapsed since first commit (for chart compat; was: hafta_no)
 
 
 @dataclass
-class YazarEgri:
-    """Tek yazar için onboarding eğrisi."""
+class AuthorCurve:
+    """Onboarding curve for a single author."""
 
-    yazar: str
-    toplam_commit: int
-    anlama_skoru_olan: int
-    ramp_up_hafta: Optional[float]   # None = yeterli veri yok / eşik aşılmadı
-    son_ort_anlama: Optional[float]  # son 5 commit ortalaması
-    noktalar: list[CommitNoktasi]
+    author: str               # kept for API compatibility (was: yazar)
+    total_commits: int
+    commits_with_understanding: int
+    ramp_up_weeks: Optional[float]   # None = insufficient data / threshold not reached (was: ramp_up_hafta)
+    latest_avg_understanding: Optional[float]  # average of last 5 commits (was: son_ort_anlama)
+    points: list[CommitDataPoint]
 
 
-def get_author_timeline(author: str, db_path: Path) -> list[CommitNoktasi]:
+def get_author_timeline(author: str, db_path: Path) -> list[CommitDataPoint]:
     """
-    Bir yazarın tüm commit'lerini kronolojik anlama skoruyla döndür.
+    Return all commits for an author in chronological order with understanding scores.
 
     Args:
-        author: Yazar adı (commits.author ile eşleşmeli)
-        db_path: SQLite veritabanı yolu
+        author: Author name (must match commits.author)
+        db_path: SQLite database path
 
     Returns:
-        CommitNoktasi listesi, tarih sırasıyla
+        List of CommitDataPoint sorted by date
     """
     try:
         with get_connection(db_path) as conn:
@@ -67,98 +67,98 @@ def get_author_timeline(author: str, db_path: Path) -> list[CommitNoktasi]:
     if not rows:
         return []
 
-    ilk_ts = rows[0]["timestamp"] or 0
-    noktalar: list[CommitNoktasi] = []
+    first_ts = rows[0]["timestamp"] or 0
+    points: list[CommitDataPoint] = []
 
     for i, r in enumerate(rows):
-        ts = r["timestamp"] or ilk_ts
-        hafta = int((ts - ilk_ts) / (7 * 24 * 3600))
-        noktalar.append(
-            CommitNoktasi(
+        ts = r["timestamp"] or first_ts
+        week = int((ts - first_ts) / (7 * 24 * 3600))
+        points.append(
+            CommitDataPoint(
                 commit_hash=r["commit_hash"] or "",
                 commit_no=i + 1,
-                tarih=datetime.fromtimestamp(ts),
+                date=datetime.fromtimestamp(ts),
                 understanding_score=(
                     float(r["understanding_score"])
                     if r["understanding_score"] is not None
                     else None
                 ),
-                hafta_no=hafta,
+                week_number=week,
             )
         )
 
-    return noktalar
+    return points
 
 
 def estimate_ramp_up_weeks(
     author: str,
     db_path: Path,
-    threshold: float = _VARSAYILAN_ESIK,
+    threshold: float = _DEFAULT_THRESHOLD,
 ) -> Optional[float]:
     """
-    Yazarın ortalama anlama skoru threshold'u aştığı ilk haftayı tahmin et.
+    Estimate the first week when the author's average understanding score exceeds the threshold.
 
-    Algoritma:
-      - Anlama skoru olan commit'ler 3'lü hareketli ortalama ile yumuşatılır
-      - Yumuşatılmış skor threshold'u aştığı ilk commit'in hafta numarası döndürülür
-      - Yeterli veri yoksa (< MIN_COMMIT anketli commit) None döndürülür
+    Algorithm:
+      - Commits with understanding scores are smoothed with a 3-point moving average
+      - Returns the week number of the first commit where the smoothed score exceeds the threshold
+      - Returns None if insufficient data (< MIN_COMMITS surveyed commits)
 
     Args:
-        author: Yazar adı
-        db_path: SQLite veritabanı yolu
-        threshold: Üretkenlik eşiği (varsayılan 3.5/5)
+        author: Author name
+        db_path: SQLite database path
+        threshold: Productivity threshold (default 3.5/5)
 
     Returns:
-        Ramp-up haftası veya None
+        Ramp-up week number, or None
     """
-    noktalar = get_author_timeline(author, db_path)
-    anketli = [n for n in noktalar if n.understanding_score is not None]
+    points = get_author_timeline(author, db_path)
+    surveyed = [p for p in points if p.understanding_score is not None]
 
-    if len(anketli) < _MIN_COMMIT:
+    if len(surveyed) < _MIN_COMMITS:
         return None
 
-    # 3'lü hareketli ortalama
-    skorlar = [n.understanding_score for n in anketli]  # type: ignore[misc]
-    for i in range(2, len(skorlar)):
-        pencere = skorlar[max(0, i - 2): i + 1]
-        ort = sum(pencere) / len(pencere)
-        if ort >= threshold:
-            return float(anketli[i].hafta_no)
+    # 3-point moving average
+    scores = [p.understanding_score for p in surveyed]  # type: ignore[misc]
+    for i in range(2, len(scores)):
+        window = scores[max(0, i - 2): i + 1]
+        avg = sum(window) / len(window)
+        if avg >= threshold:
+            return float(surveyed[i].week_number)
 
-    return None  # eşik hiç aşılmadı
+    return None  # threshold never reached
 
 
-def get_author_curve(author: str, db_path: Path) -> YazarEgri:
+def get_author_curve(author: str, db_path: Path) -> AuthorCurve:
     """
-    Tek yazar için tam onboarding eğrisi nesnesi oluştur.
+    Build a complete onboarding curve object for a single author.
 
     Args:
-        author: Yazar adı
-        db_path: SQLite veritabanı yolu
+        author: Author name
+        db_path: SQLite database path
 
     Returns:
-        YazarEgri nesnesi
+        AuthorCurve object
     """
-    noktalar = get_author_timeline(author, db_path)
-    anketli = [n for n in noktalar if n.understanding_score is not None]
+    points = get_author_timeline(author, db_path)
+    surveyed = [p for p in points if p.understanding_score is not None]
 
     ramp_up = estimate_ramp_up_weeks(author, db_path)
 
-    son_5 = [n.understanding_score for n in anketli[-5:] if n.understanding_score]
-    son_ort = sum(son_5) / len(son_5) if son_5 else None
+    last_5 = [p.understanding_score for p in surveyed[-5:] if p.understanding_score]
+    latest_avg = sum(last_5) / len(last_5) if last_5 else None
 
-    return YazarEgri(
-        yazar=author,
-        toplam_commit=len(noktalar),
-        anlama_skoru_olan=len(anketli),
-        ramp_up_hafta=round(ramp_up, 1) if ramp_up is not None else None,
-        son_ort_anlama=round(son_ort, 2) if son_ort is not None else None,
-        noktalar=noktalar,
+    return AuthorCurve(
+        author=author,
+        total_commits=len(points),
+        commits_with_understanding=len(surveyed),
+        ramp_up_weeks=round(ramp_up, 1) if ramp_up is not None else None,
+        latest_avg_understanding=round(latest_avg, 2) if latest_avg is not None else None,
+        points=points,
     )
 
 
 def get_all_authors(db_path: Path) -> list[str]:
-    """DB'deki tüm benzersiz yazar listesini döndür."""
+    """Return all unique authors in the DB."""
     try:
         with get_connection(db_path) as conn:
             rows = conn.execute(
@@ -171,25 +171,25 @@ def get_all_authors(db_path: Path) -> list[str]:
 
 def team_onboarding_summary(db_path: Path) -> list[dict]:
     """
-    Takımdaki tüm yazarlar için ramp-up süresi özeti döndür.
+    Return a ramp-up summary for all authors on the team.
 
     Returns:
-        Yazar bazlı özet dict listesi, ramp_up_hafta'ya göre sıralı
+        List of per-author summary dicts, sorted by ramp_up_weeks
     """
-    yazarlar = get_all_authors(db_path)
-    ozet: list[dict] = []
+    authors = get_all_authors(db_path)
+    summary: list[dict] = []
 
-    for yazar in yazarlar:
-        egri = get_author_curve(yazar, db_path)
-        ozet.append({
-            "yazar": yazar,
-            "toplam_commit": egri.toplam_commit,
-            "anlama_skoru_olan": egri.anlama_skoru_olan,
-            "ramp_up_hafta": egri.ramp_up_hafta,
-            "son_ort_anlama": egri.son_ort_anlama,
-            "yeterli_veri": egri.anlama_skoru_olan >= _MIN_COMMIT,
+    for author in authors:
+        curve = get_author_curve(author, db_path)
+        summary.append({
+            "author": author,
+            "total_commits": curve.total_commits,
+            "commits_with_understanding": curve.commits_with_understanding,
+            "ramp_up_weeks": curve.ramp_up_weeks,
+            "latest_avg_understanding": curve.latest_avg_understanding,
+            "sufficient_data": curve.commits_with_understanding >= _MIN_COMMITS,
         })
 
-    # Ramp-up süresi olan önce, sonra None olanlar
-    ozet.sort(key=lambda x: (x["ramp_up_hafta"] is None, x["ramp_up_hafta"] or 999))
-    return ozet
+    # Sort: authors with ramp-up data first, then None
+    summary.sort(key=lambda x: (x["ramp_up_weeks"] is None, x["ramp_up_weeks"] or 999))
+    return summary

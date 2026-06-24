@@ -1,6 +1,6 @@
 /**
  * Next.js API Route — /api/auth/me
- * Cookie'deki token ile FastAPI'den kullanıcı bilgisini proxy'ler.
+ * Proxies user info from FastAPI using the cookie token.
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -13,20 +13,20 @@ export async function GET(_req: NextRequest) {
   const token = cookieStore.get("codedna_token")?.value;
 
   if (!token) {
-    return NextResponse.json({ detail: "Giriş yapılmamış." }, { status: 401 });
+    return NextResponse.json({ detail: "Not logged in." }, { status: 401 });
   }
 
   try {
-    const yanit = await fetch(`${API_URL}/auth/me`, {
+    const response = await fetch(`${API_URL}/auth/me`, {
       headers: { Authorization: `Bearer ${token}` },
     });
 
-    if (!yanit.ok) {
-      return NextResponse.json({ detail: "Geçersiz oturum." }, { status: 401 });
+    if (!response.ok) {
+      return NextResponse.json({ detail: "Invalid session." }, { status: 401 });
     }
 
-    return NextResponse.json(await yanit.json());
+    return NextResponse.json(await response.json());
   } catch {
-    return NextResponse.json({ detail: "API'ye bağlanılamadı." }, { status: 503 });
+    return NextResponse.json({ detail: "Cannot connect to API." }, { status: 503 });
   }
 }

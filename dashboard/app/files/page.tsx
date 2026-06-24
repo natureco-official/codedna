@@ -1,42 +1,42 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { getRepoDosyalar, DosyalarYanit } from "@/lib/api";
+import { getRepoFiles, FilesResponse } from "@/lib/api";
 import { FileHeatmap, FileHeatmapSkeleton } from "@/components/FileHeatmap";
-import { HataBanner } from "@/components/HataBanner";
+import { ErrorBanner } from "@/components/ErrorBanner";
 import { useTranslation } from "@/lib/i18n";
 
-export default function DosyalarSayfasi() {
+export default function FilesPage() {
   const { t } = useTranslation();
   const [minRisk, setMinRisk] = useState(0);
-  const [veri, setVeri] = useState<DosyalarYanit | null>(null);
-  const [yukleniyor, setYukleniyor] = useState(true);
-  const [hata, setHata] = useState(false);
+  const [data, setData] = useState<FilesResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
 
   useEffect(() => {
-    setYukleniyor(true);
-    setHata(false);
-    getRepoDosyalar(minRisk / 100)
-      .then(setVeri)
-      .catch(() => setHata(true))
-      .finally(() => setYukleniyor(false));
+    setLoading(true);
+    setError(false);
+    getRepoFiles(minRisk / 100)
+      .then(setData)
+      .catch(() => setError(true))
+      .finally(() => setLoading(false));
   }, [minRisk]);
 
   return (
     <div className="space-y-6">
-      {/* Başlık */}
+      {/* Header */}
       <div>
         <h1 className="text-2xl font-bold text-white">📁 {t("files_title")}</h1>
         <p className="text-gray-500 text-sm mt-1">{t("files_subtitle")}</p>
       </div>
 
-      {/* Filtre kartı */}
+      {/* Filter card */}
       <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
         <div className="flex flex-col sm:flex-row sm:items-center gap-4">
           <div className="flex-1">
             <label className="text-sm text-gray-400 mb-2 block">
               {t("files_filter")}:{" "}
-              <span className="text-cyan-400 font-semibold">%{minRisk}</span>
+              <span className="text-cyan-400 font-semibold">{minRisk}%</span>
             </label>
             <input
               type="range"
@@ -51,17 +51,17 @@ export default function DosyalarSayfasi() {
               <span>{t("files_filter_all")}</span>
               <span>{t("files_filter_medium")}</span>
               <span>{t("files_filter_high")}</span>
-              <span>%100</span>
+              <span>100%</span>
             </div>
           </div>
 
-          {veri && (
+          {data && (
             <div className="sm:text-right">
-              <p className="text-2xl font-bold text-cyan-400">{veri.toplam_dosya}</p>
+              <p className="text-2xl font-bold text-cyan-400">{data.total_files}</p>
               <p className="text-xs text-gray-500">
                 {t("files_results")} · {t("files_avg_ai")}:{" "}
                 <span className="text-gray-300">
-                  %{(veri.ortalama_ai_skoru * 100).toFixed(0)}
+                  {(data.avg_ai_score * 100).toFixed(0)}%
                 </span>
               </p>
             </div>
@@ -69,22 +69,22 @@ export default function DosyalarSayfasi() {
         </div>
       </div>
 
-      {hata && <HataBanner />}
+      {error && <ErrorBanner />}
 
-      {/* Tablo */}
+      {/* Table */}
       <div className="bg-gray-900 border border-gray-800 rounded-xl p-6">
         <h2 className="text-white font-semibold mb-4 flex items-center gap-2">
           <span className="text-cyan-400">◈</span> {t("files_section")}
-          {veri && (
+          {data && (
             <span className="text-gray-600 text-xs font-normal">
-              — {veri.toplam_dosya} {t("files_results")}
+              — {data.total_files} {t("files_results")}
             </span>
           )}
         </h2>
-        {yukleniyor ? (
+        {loading ? (
           <FileHeatmapSkeleton />
-        ) : veri ? (
-          <FileHeatmap dosyalar={veri.dosyalar} />
+        ) : data ? (
+          <FileHeatmap files={data.files} />
         ) : null}
       </div>
     </div>

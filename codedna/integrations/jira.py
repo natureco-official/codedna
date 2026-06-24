@@ -1,4 +1,4 @@
-"""Jira sprint verilerini CodeDNA sprint kayıtlarıyla eşleştirir."""
+"""Maps Jira sprint data to CodeDNA sprint records."""
 
 from __future__ import annotations
 
@@ -10,105 +10,104 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
 
-# Webhook secret dosyası
-_SECRET_DOSYASI = Path.home() / ".codedna" / "jira_secret.txt"
+# Webhook secret file
+_SECRET_FILE = Path.home() / ".codedna" / "jira_secret.txt"
 
 
 # ---------------------------------------------------------------------------
-# Webhook Secret Yönetimi
+# Webhook Secret Management
 # ---------------------------------------------------------------------------
 
 def get_or_create_secret() -> str:
     """
-    Jira webhook secret'ını oku veya yoksa yeni oluştur.
+    Read the Jira webhook secret or create a new one if it doesn't exist.
 
     Returns:
-        Hex formatında 32-byte secret
+        32-byte secret in hex format
     """
-    if _SECRET_DOSYASI.exists():
-        return _SECRET_DOSYASI.read_text().strip()
+    if _SECRET_FILE.exists():
+        return _SECRET_FILE.read_text().strip()
     secret = secrets.token_hex(32)
-    _SECRET_DOSYASI.parent.mkdir(parents=True, exist_ok=True)
-    _SECRET_DOSYASI.write_text(secret)
+    _SECRET_FILE.parent.mkdir(parents=True, exist_ok=True)
+    _SECRET_FILE.write_text(secret)
     return secret
 
 
 def rotate_secret() -> str:
-    """Webhook secret'ı yenile ve yeni değeri döndür."""
-    yeni = secrets.token_hex(32)
-    _SECRET_DOSYASI.parent.mkdir(parents=True, exist_ok=True)
-    _SECRET_DOSYASI.write_text(yeni)
-    return yeni
+    """Rotate the webhook secret and return the new value."""
+    new_secret = secrets.token_hex(32)
+    _SECRET_FILE.parent.mkdir(parents=True, exist_ok=True)
+    _SECRET_FILE.write_text(new_secret)
+    return new_secret
 
 
 def verify_signature(payload_bytes: bytes, signature_header: str, secret: str) -> bool:
     """
-    Jira webhook imzasını HMAC-SHA256 ile doğrula.
+    Verify a Jira webhook signature using HMAC-SHA256.
 
-    Jira imzası formatı: "sha256=<hex_digest>"
+    Jira signature format: "sha256=<hex_digest>"
 
     Args:
-        payload_bytes: Ham HTTP body
-        signature_header: X-Hub-Signature-256 başlık değeri
+        payload_bytes: Raw HTTP body
+        signature_header: X-Hub-Signature-256 header value
         secret: Webhook secret
 
     Returns:
-        İmza geçerliyse True
+        True if the signature is valid
     """
     if not signature_header.startswith("sha256="):
         return False
-    beklenen_imza = signature_header[7:]
-    hesaplanan = hmac.new(
+    expected = signature_header[7:]
+    computed = hmac.new(
         secret.encode("utf-8"),
         payload_bytes,
         hashlib.sha256,
     ).hexdigest()
-    return hmac.compare_digest(hesaplanan, beklenen_imza)
+    return hmac.compare_digest(computed, expected)
 
 
 # ---------------------------------------------------------------------------
-# Webhook İşleme
+# Webhook Processing
 # ---------------------------------------------------------------------------
 
 def handle_jira_webhook(payload: dict[str, Any], db_path: Path) -> dict[str, Any]:
     """
-    Jira webhook payload'unu işle, sprint kaydı oluştur/güncelle.
+    Process a Jira webhook payload and create/update a sprint record.
 
-    Desteklenen event türleri:
-      - sprint_started:  Yeni sprint başladı → kayıt oluştur
-      - sprint_closed:   Sprint kapandı → sağlık skoru hesapla + güncelle
+    Supported event types:
+      - sprint_started: New sprint started → create record
+      - sprint_closed:  Sprint closed → calculate health score + update
 
     Args:
-        payload: Jira webhook JSON payload'u
-        db_path: SQLite veritabanı yolu
+        payload: Jira webhook JSON payload
+        db_path: SQLite database path
 
     Returns:
-        İşlem sonucu sözlüğü
+        Dict with operation result
     """
-    event_turu = payload.get("webhookEvent", "")
-    sprint_verisi = payload.get("sprint", {})
+    event_type = payload.get("webhookEvent", "")
+    sprint_data = payload.get("sprint", {})
 
-    if not sprint_verisi:
-        return {"durum": "atlandı", "neden": "sprint verisi yok"}
+    if not sprint_data:
+        return {"status": "skipped", "reason": "no sprint data"}
 
-    sprint_adi = sprint_verisi.get("name", "Jira Sprint")
-    baslangic_str = sprint_verisi.get("startDate") or sprint_verisi.get("activatedDate")
-    bitis_str = sprint_verisi.get("endDate") or sprint_verisi.get("completeDate")
+    sprint_name = sprint_data.get("name", "Jira Sprint")
+    start_str = sprint_data.get("startDate") or sprint_data.get("activatedDate")
+    end_str = sprint_data.get("endDate") or sprint_data.get("completeDate")
 
-    # Tarihleri parse et
-    baslangic = _tarih_parse(baslangic_str)
-    bitis = _tarih_parse(bitis_str)
+    start = _parse_date(start_str)
+    end = _parse_date(end_str)
 
-    if not baslangic or not bitis:
-        return {"durum": "hata", "neden": "tarih bilgisi eksik"}
+    if not start or not end:
+        return {"status": "error", "reason": "missing date information"}
 
-    if event_turu in ("sprint_started", "jira:sprint_created"):
-        # Sprint başladı — kayıt oluştur (sağlık skoru hesaplanmadı henüz)
+    if event_type in ("sprint_started", "jira:sprint_created"):
+        # Sprint started — create record (health score not yet calculated)
         from codedna.db import save_sprint
         sprint_id = save_sprint(
-            sprint_name=sprint_adi,
-            start_date=int(baslangic.timestamp()),
-            end_date=int(bitis.timestamp()),
+            sprint_name=sprint_name,
+            start_date=int(start.timestamp()),
+            end_date=int(end.timestamp()),
             total_lines_ai=0,
             total_lines_human=0,
             avg_understanding=None,
@@ -117,50 +116,50 @@ def handle_jira_webhook(payload: dict[str, Any], db_path: Path) -> dict[str, Any
             db_path=db_path,
         )
         return {
-            "durum": "oluşturuldu",
+            "status": "created",
             "sprint_id": sprint_id,
-            "sprint_adi": sprint_adi,
+            "sprint_name": sprint_name,
         }
 
-    elif event_turu in ("sprint_closed", "jira:sprint_completed"):
-        # Sprint kapandı — sağlık skoru hesapla
+    elif event_type in ("sprint_closed", "jira:sprint_completed"):
+        # Sprint closed — calculate health score
         from codedna.sprint_health import calculate_sprint_health, save_sprint_result
         from codedna.git_hook import find_git_root
 
-        repo_koku = find_git_root() or Path.cwd()
+        repo_root = find_git_root() or Path.cwd()
         try:
-            sonuc = calculate_sprint_health(repo_koku, db_path, baslangic, bitis, sprint_adi)
-            sprint_id = save_sprint_result(sonuc, db_path)
+            result = calculate_sprint_health(repo_root, db_path, start, end, sprint_name)
+            sprint_id = save_sprint_result(result, db_path)
             return {
-                "durum": "tamamlandı",
+                "status": "completed",
                 "sprint_id": sprint_id,
-                "sprint_adi": sprint_adi,
-                "health_score": sonuc.health_score,
-                "durum_etiketi": sonuc.durum,
+                "sprint_name": sprint_name,
+                "health_score": result.health_score,
+                "sprint_status": result.status,
             }
         except Exception as e:
-            return {"durum": "hata", "neden": str(e)}
+            return {"status": "error", "reason": str(e)}
 
-    return {"durum": "atlandı", "neden": f"desteklenmeyen event: {event_turu}"}
+    return {"status": "skipped", "reason": f"unsupported event: {event_type}"}
 
 
-def _tarih_parse(tarih_str: Optional[str]) -> Optional[datetime]:
+def _parse_date(date_str: Optional[str]) -> Optional[datetime]:
     """
-    Jira tarih string'lerini datetime'a çevir.
-    Desteklenen formatlar: ISO 8601 ile çeşitli varyantlar.
+    Parse Jira date strings into datetime.
+    Supported formats: ISO 8601 and common variants.
     """
-    if not tarih_str:
+    if not date_str:
         return None
-    formatlar = [
+    formats = [
         "%Y-%m-%dT%H:%M:%S.%f%z",
         "%Y-%m-%dT%H:%M:%S%z",
         "%Y-%m-%dT%H:%M:%S.%f",
         "%Y-%m-%dT%H:%M:%S",
         "%Y-%m-%d",
     ]
-    for fmt in formatlar:
+    for fmt in formats:
         try:
-            return datetime.strptime(tarih_str[:len(fmt) + 5], fmt)
+            return datetime.strptime(date_str[:len(fmt) + 5], fmt)
         except ValueError:
             continue
     return None

@@ -1,6 +1,18 @@
 #!/bin/bash
 # CodeDNA post-commit hook şablonu
 # Bu dosya 'codedna init' tarafından .git/hooks/post-commit'e kopyalanır.
+#
+# Anketin çalışması için stdin'i doğrudan terminale (/dev/tty) bağla.
+# Git hook'ları bazı durumlarda stdin'i kapalı/boş bir akışa yönlendirir;
+# bu satır olmadan IntPrompt anında EOFError alıp anketi sessizce atlıyor.
+#
+# Koşullar:
+#   [ -t 1 ]     → çıkış bir terminale bağlı (CI/pipe'da false → anket sorulmaz, bu doğru)
+#   [ -r /dev/tty ] → /dev/tty gerçekten okunabilir
+# İkisi de doğruysa stdin'i kullanıcının gerçek terminaline bağla.
+if [ -t 1 ] && [ -r /dev/tty ]; then
+    exec < /dev/tty
+fi
 
 if command -v codedna &> /dev/null; then
     codedna status --hook

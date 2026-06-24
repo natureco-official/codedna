@@ -1,6 +1,6 @@
 /**
  * Next.js API Route — Logout
- * Cookie'yi siler ve FastAPI'ye logout isteği atar.
+ * Deletes cookie and sends logout request to FastAPI.
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -12,7 +12,7 @@ export async function POST(_req: NextRequest) {
   const cookieStore = cookies();
   const token = cookieStore.get("codedna_token")?.value;
 
-  // FastAPI'ye logout isteği (sessiz — hata olsa da cookie sileriz)
+  // Send logout request to FastAPI (silent — we delete cookie even on error)
   if (token) {
     try {
       await fetch(`${API_URL}/auth/logout`, {
@@ -20,16 +20,16 @@ export async function POST(_req: NextRequest) {
         headers: { Authorization: `Bearer ${token}` },
       });
     } catch {
-      // Sessiz hata — cookie her halükarda silinir
+      // Silent error — cookie is deleted regardless
     }
   }
 
-  const yanit = NextResponse.json({ mesaj: "Çıkış başarılı." });
-  yanit.cookies.set("codedna_token", "", {
+  const response = NextResponse.json({ message: "Logout successful." });
+  response.cookies.set("codedna_token", "", {
     httpOnly: true,
     maxAge: 0,
     path: "/",
   });
 
-  return yanit;
+  return response;
 }

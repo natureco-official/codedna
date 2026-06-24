@@ -11,7 +11,7 @@ body {
   color: #f1f5f9;
 }
 
-/* Özel scrollbar */
+/* Custom scrollbar */
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;

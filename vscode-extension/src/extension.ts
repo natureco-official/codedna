@@ -1,11 +1,11 @@
 /**
- * CodeDNA VS Code Extension — giriş noktası.
+ * CodeDNA VS Code Extension — entry point.
  *
- * Davranış:
- *   - Dosya açıldığında/kaydedildiğinde AI% ve risk seviyesini status bar'da gösterir
- *   - codedna serve kapalıysa: sönük "bağlı değil" — popup/hata spam YOK
- *   - Status bar'a tıklanınca dashboard açılır
- *   - Yüksek riskli dosyalarda kenar vurgusu (göze batmayan)
+ * Behavior:
+ *   - Shows AI% and risk level in the status bar when a file is opened/saved
+ *   - When codedna serve is not running: dim "not connected" — NO popup/error spam
+ *   - Clicking the status bar opens the dashboard
+ *   - Subtle border highlight on high-risk files (non-intrusive)
  */
 
 import * as vscode from "vscode";
@@ -17,11 +17,11 @@ let statusBar: CodeDNAStatusBar;
 let healthCheckInterval: ReturnType<typeof setInterval> | null = null;
 let lastKnownAlive = false;
 
-/** Eklenti etkinleştiğinde çağrılır. */
+/** Called when the extension is activated. */
 export function activate(context: vscode.ExtensionContext): void {
   statusBar = new CodeDNAStatusBar();
 
-  // Komut: Dashboard'u tarayıcıda aç
+  // Command: open dashboard in browser
   context.subscriptions.push(
     vscode.commands.registerCommand("codedna.openDashboard", () => {
       const dashUrl = vscode.workspace
@@ -31,7 +31,7 @@ export function activate(context: vscode.ExtensionContext): void {
     })
   );
 
-  // Komut: Aktif dosyayı yenile
+  // Command: refresh active file
   context.subscriptions.push(
     vscode.commands.registerCommand("codedna.refreshFile", () => {
       const editor = vscode.window.activeTextEditor;
@@ -41,7 +41,7 @@ export function activate(context: vscode.ExtensionContext): void {
     })
   );
 
-  // Dosya açıldığında analiz et
+  // Analyze when a file is opened
   context.subscriptions.push(
     vscode.window.onDidChangeActiveTextEditor((editor) => {
       if (editor) {
@@ -52,7 +52,7 @@ export function activate(context: vscode.ExtensionContext): void {
     })
   );
 
-  // Dosya kaydedildiğinde analiz et
+  // Analyze when a file is saved
   context.subscriptions.push(
     vscode.workspace.onDidSaveTextDocument((doc) => {
       const editor = vscode.window.activeTextEditor;
@@ -62,7 +62,7 @@ export function activate(context: vscode.ExtensionContext): void {
     })
   );
 
-  // Ayarlar değiştiğinde yenile
+  // Reload when settings change
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration((e) => {
       if (e.affectsConfiguration("codedna")) {
@@ -73,7 +73,7 @@ export function activate(context: vscode.ExtensionContext): void {
     })
   );
 
-  // Periyodik sağlık kontrolü (30 saniyede bir) — bağlantı durumu değişince güncelle
+  // Periodic health check (every 30 seconds) — update when connection state changes
   healthCheckInterval = setInterval(async () => {
     const apiUrl = vscode.workspace
       .getConfiguration("codedna")
@@ -96,14 +96,14 @@ export function activate(context: vscode.ExtensionContext): void {
     },
   });
 
-  // Başlangıçta aktif dosyayı analiz et
+  // Analyze active file on startup
   const activeEditor = vscode.window.activeTextEditor;
   if (activeEditor) {
     analyzeAndDecorate(activeEditor);
   }
 }
 
-/** Dosyayı analiz et ve hem status bar hem dekorasyonu güncelle. */
+/** Analyze a file and update both the status bar and decoration. */
 async function analyzeAndDecorate(editor: vscode.TextEditor): Promise<void> {
   const enabled = vscode.workspace
     .getConfiguration("codedna")
@@ -115,23 +115,23 @@ async function analyzeAndDecorate(editor: vscode.TextEditor): Promise<void> {
     return;
   }
 
-  // Status bar'ı güncelle (debounce içeriyor)
+  // Update status bar (includes debounce)
   statusBar.analyzeFile(editor.document);
 
-  // Dekorasyon için doğrudan API çağrısı (status bar'dan bağımsız)
+  // Direct API call for decoration (independent of status bar)
   const apiUrl = vscode.workspace
     .getConfiguration("codedna")
     .get<string>("apiUrl", "http://localhost:8000");
 
   const result = await getFileAnalysis(apiUrl, editor.document.fileName);
   if (result) {
-    applyRiskDecoration(editor, result.ai_yuzdesi);
+    applyRiskDecoration(editor, result.ai_percentage);
   } else {
     clearDecorations(editor);
   }
 }
 
-/** Eklenti devre dışı bırakıldığında çağrılır. */
+/** Called when the extension is deactivated. */
 export function deactivate(): void {
   if (healthCheckInterval) clearInterval(healthCheckInterval);
 }

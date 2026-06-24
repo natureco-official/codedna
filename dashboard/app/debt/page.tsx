@@ -2,155 +2,146 @@
 
 import { useState, useEffect, useCallback } from "react";
 import {
-  BarChart,
-  Bar,
-  XAxis,
-  YAxis,
-  Tooltip,
-  ResponsiveContainer,
-  Cell,
+  BarChart, Bar, XAxis, YAxis, Tooltip,
+  ResponsiveContainer, Cell,
 } from "recharts";
 import { useTranslation } from "@/lib/i18n";
 import { getCurrentPlan } from "@/lib/plan";
-import { HataBanner } from "@/components/HataBanner";
+import { ErrorBanner } from "@/components/ErrorBanner";
 import { CostInfoTooltip } from "@/components/CostInfoTooltip";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
-interface DebtDosya {
-  dosya_yolu: string;
-  debt_saatleri: number;
-  aylik_maliyet_usd: number | null;
-  risk_seviyesi: string;
-  ai_olasiligi: number;
-  karmasiklik: number;
-  toplam_satir: number;
+interface DebtFile {
+  file_path: string;
+  debt_hours: number;
+  monthly_cost_usd: number | null;
+  risk_level: string;
+  ai_probability: number;
+  complexity: number;
+  total_lines: number;
 }
 
-interface DebtOzet {
-  toplam_debt_saatleri: number;
-  toplam_aylik_maliyet_usd: number | null;
-  dolar_gizli: boolean;
-  saatlik_ucret: number;
-  toplam_dosya: number;
-  en_pahali_5: { dosya_yolu: string; debt_saatleri: number; aylik_maliyet_usd: number | null; risk_seviyesi: string }[];
+interface DebtSummary {
+  total_debt_hours: number;
+  total_monthly_cost_usd: number | null;
+  dollars_hidden: boolean;
+  hourly_rate: number;
+  total_files: number;
+  top_5_most_expensive: { file_path: string; debt_hours: number; monthly_cost_usd: number | null; risk_level: string }[];
 }
 
-interface DebtDosyaYanit {
-  toplam_dosya: number;
-  dolar_gizli: boolean;
-  saatlik_ucret: number;
-  dosyalar: DebtDosya[];
+interface DebtFilesResponse {
+  total_files: number;
+  dollars_hidden: boolean;
+  hourly_rate: number;
+  files: DebtFile[];
 }
 
-/** Risk rengini döndür */
-function riskRenk(risk: string): string {
-  if (risk === "KRİTİK" || risk === "CRITICAL") return "#ef4444";
-  if (risk === "YÜKSEK" || risk === "HIGH") return "#f97316";
-  if (risk === "ORTA" || risk === "MEDIUM") return "#eab308";
+function riskColor(risk: string): string {
+  if (risk === "CRITICAL") return "#ef4444";
+  if (risk === "HIGH") return "#f97316";
+  if (risk === "MEDIUM") return "#eab308";
   return "#22c55e";
 }
 
 function riskTailwind(risk: string): string {
-  if (risk === "KRİTİK" || risk === "CRITICAL") return "text-red-400";
-  if (risk === "YÜKSEK" || risk === "HIGH") return "text-orange-400";
-  if (risk === "ORTA" || risk === "MEDIUM") return "text-yellow-400";
+  if (risk === "CRITICAL") return "text-red-400";
+  if (risk === "HIGH") return "text-orange-400";
+  if (risk === "MEDIUM") return "text-yellow-400";
   return "text-green-400";
 }
 
-/** Kısaltılmış dosya yolu */
-function kisaYol(yol: string): string {
-  const p = yol.split("/");
-  return p.length > 2 ? p.slice(-2).join("/") : yol;
+function shortPath(path: string): string {
+  const p = path.split("/");
+  return p.length > 2 ? p.slice(-2).join("/") : path;
 }
 
-/** Recharts özel tooltip */
 function DebtTooltip({
   active,
   payload,
-  dolarGizli,
+  dollarsHidden,
 }: {
   active?: boolean;
-  payload?: Array<{ value: number; payload: { yol: string; aylik: number | null } }>;
-  dolarGizli: boolean;
+  payload?: Array<{ value: number; payload: { path: string; monthly: number | null } }>;
+  dollarsHidden: boolean;
 }) {
   if (!active || !payload?.length) return null;
   const d = payload[0];
   return (
     <div className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-xs">
-      <p className="text-gray-300 font-mono">{d.payload.yol}</p>
-      <p className="text-cyan-400 font-semibold mt-1">{d.value.toFixed(1)} saat</p>
-      {!dolarGizli && d.payload.aylik != null && (
-        <p className="text-green-400">${d.payload.aylik.toFixed(2)}/ay</p>
+      <p className="text-gray-300 font-mono">{d.payload.path}</p>
+      <p className="text-cyan-400 font-semibold mt-1">{d.value.toFixed(1)} hours</p>
+      {!dollarsHidden && d.payload.monthly != null && (
+        <p className="text-green-400">${d.payload.monthly.toFixed(2)}/mo</p>
       )}
     </div>
   );
 }
 
-export default function DebtSayfasi() {
+export default function DebtPage() {
   const { t } = useTranslation();
   const [rate, setRate] = useState(75);
   const [inputRate, setInputRate] = useState("75");
-  const [ozet, setOzet] = useState<DebtOzet | null>(null);
-  const [dosyalar, setDosyalar] = useState<DebtDosya[]>([]);
-  const [yukleniyor, setYukleniyor] = useState(true);
-  const [hata, setHata] = useState(false);
+  const [summary, setSummary] = useState<DebtSummary | null>(null);
+  const [files, setFiles] = useState<DebtFile[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
   const [plan, setPlan] = useState<string>("free");
 
   useEffect(() => {
     setPlan(getCurrentPlan());
   }, []);
 
-  const veriYukle = useCallback(async (r: number) => {
-    setYukleniyor(true);
-    setHata(false);
+  const loadData = useCallback(async (r: number) => {
+    setLoading(true);
+    setError(false);
     try {
-      const [ozetRes, dosyaRes] = await Promise.all([
+      const [summaryRes, filesRes] = await Promise.all([
         fetch(`${API_URL}/debt/summary?rate=${r}`),
         fetch(`${API_URL}/debt/files?rate=${r}&limit=10`),
       ]);
-      if (!ozetRes.ok || !dosyaRes.ok) throw new Error("api_error");
-      const [ozetVeri, dosyaVeri]: [DebtOzet, DebtDosyaYanit] = await Promise.all([
-        ozetRes.json(),
-        dosyaRes.json(),
+      if (!summaryRes.ok || !filesRes.ok) throw new Error("api_error");
+      const [summaryData, filesData]: [DebtSummary, DebtFilesResponse] = await Promise.all([
+        summaryRes.json(),
+        filesRes.json(),
       ]);
-      setOzet(ozetVeri);
-      setDosyalar(dosyaVeri.dosyalar);
+      setSummary(summaryData);
+      setFiles(filesData.files);
     } catch {
-      setHata(true);
+      setError(true);
     } finally {
-      setYukleniyor(false);
+      setLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    veriYukle(rate);
-  }, [rate, veriYukle]);
+    loadData(rate);
+  }, [rate, loadData]);
 
   const handleRateChange = () => {
-    const yeni = parseFloat(inputRate);
-    if (!isNaN(yeni) && yeni > 0) setRate(yeni);
+    const val = parseFloat(inputRate);
+    if (!isNaN(val) && val > 0) setRate(val);
   };
 
-  const dolarGizli = ozet?.dolar_gizli ?? plan === "free";
+  const dollarsHidden = summary?.dollars_hidden ?? plan === "free";
 
-  // Bar chart verisi
-  const grafikVeri = dosyalar.slice(0, 8).map((d) => ({
-    yol: kisaYol(d.dosya_yolu),
-    saat: d.debt_saatleri,
-    aylik: d.aylik_maliyet_usd,
-    risk: d.risk_seviyesi,
+  const chartData = files.slice(0, 8).map((f) => ({
+    path: shortPath(f.file_path),
+    hours: f.debt_hours,
+    monthly: f.monthly_cost_usd,
+    risk: f.risk_level,
   }));
 
   return (
     <div className="space-y-6">
-      {/* Başlık */}
+      {/* Header */}
       <div>
         <h1 className="text-2xl font-bold text-white">💰 {t("debt_title")}</h1>
         <p className="text-gray-500 text-sm mt-1">{t("debt_subtitle")}</p>
       </div>
 
-      {/* Saatlik ücret kontrolü */}
+      {/* Hourly rate control */}
       <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
         <div className="flex flex-col sm:flex-row sm:items-center gap-4">
           <div className="flex-1">
@@ -177,8 +168,7 @@ export default function DebtSayfasi() {
             </div>
           </div>
 
-          {/* Free plan kısıtlama notu */}
-          {dolarGizli && (
+          {dollarsHidden && (
             <div className="flex items-center gap-2 text-xs text-amber-400 bg-amber-500/10 border border-amber-500/20 rounded-lg px-3 py-2">
               <span>🔒</span>
               <span>{t("debt_free_hint")}</span>
@@ -187,30 +177,28 @@ export default function DebtSayfasi() {
         </div>
       </div>
 
-      {hata && <HataBanner />}
+      {error && <ErrorBanner />}
 
-      {/* Özet kartlar */}
-      {ozet && !yukleniyor && (
+      {/* Summary cards */}
+      {summary && !loading && (
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
           <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
             <p className="text-xs text-gray-500 uppercase tracking-wider mb-1">
               {t("debt_total_hours")}
             </p>
             <p className="text-2xl font-bold text-cyan-400">
-              {ozet.toplam_debt_saatleri.toFixed(1)}h
+              {summary.total_debt_hours.toFixed(1)}h
             </p>
           </div>
           <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
             <p className="text-xs text-gray-500 uppercase tracking-wider mb-1">
               {t("debt_monthly_cost")}
             </p>
-            {dolarGizli ? (
-              <p className="text-2xl font-bold text-gray-700 select-none blur-sm">
-                $999/mo
-              </p>
+            {dollarsHidden ? (
+              <p className="text-2xl font-bold text-gray-700 select-none blur-sm">$999/mo</p>
             ) : (
               <p className="text-2xl font-bold text-green-400 flex items-center">
-                ${ozet.toplam_aylik_maliyet_usd?.toFixed(0) ?? "—"}/mo
+                ${summary.total_monthly_cost_usd?.toFixed(0) ?? "—"}/mo
                 <CostInfoTooltip />
               </p>
             )}
@@ -224,8 +212,7 @@ export default function DebtSayfasi() {
         </div>
       )}
 
-      {/* Yükleniyor */}
-      {yukleniyor && (
+      {loading && (
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
           {Array.from({ length: 3 }).map((_, i) => (
             <div key={i} className="h-24 bg-gray-800 rounded-xl animate-pulse" />
@@ -234,18 +221,15 @@ export default function DebtSayfasi() {
       )}
 
       {/* Bar chart */}
-      {grafikVeri.length > 0 && (
+      {chartData.length > 0 && (
         <div className="bg-gray-900 border border-gray-800 rounded-xl p-6">
           <h2 className="text-white font-semibold mb-4 flex items-center gap-2">
             <span className="text-cyan-400">◈</span> {t("debt_top_files")}
           </h2>
           <ResponsiveContainer width="100%" height={220}>
-            <BarChart
-              data={grafikVeri}
-              margin={{ top: 4, right: 8, left: -8, bottom: 40 }}
-            >
+            <BarChart data={chartData} margin={{ top: 4, right: 8, left: -8, bottom: 40 }}>
               <XAxis
-                dataKey="yol"
+                dataKey="path"
                 tick={{ fill: "#6b7280", fontSize: 10, fontFamily: "monospace" }}
                 axisLine={false}
                 tickLine={false}
@@ -260,12 +244,12 @@ export default function DebtSayfasi() {
                 unit="h"
               />
               <Tooltip
-                content={<DebtTooltip dolarGizli={dolarGizli} />}
+                content={<DebtTooltip dollarsHidden={dollarsHidden} />}
                 cursor={{ fill: "rgba(255,255,255,0.04)" }}
               />
-              <Bar dataKey="saat" radius={[4, 4, 0, 0]}>
-                {grafikVeri.map((entry, i) => (
-                  <Cell key={i} fill={riskRenk(entry.risk)} />
+              <Bar dataKey="hours" radius={[4, 4, 0, 0]}>
+                {chartData.map((entry, i) => (
+                  <Cell key={i} fill={riskColor(entry.risk)} />
                 ))}
               </Bar>
             </BarChart>
@@ -273,13 +257,13 @@ export default function DebtSayfasi() {
         </div>
       )}
 
-      {/* Dosya tablosu */}
-      {dosyalar.length > 0 && (
+      {/* File table */}
+      {files.length > 0 && (
         <div className="bg-gray-900 border border-gray-800 rounded-xl p-6">
           <h2 className="text-white font-semibold mb-4 flex items-center gap-2">
             <span className="text-cyan-400">◈</span> {t("debt_col_file")}
             <span className="text-gray-600 text-xs font-normal">
-              — {dosyalar.length} {t("files_results")}
+              — {files.length} {t("files_results")}
             </span>
           </h2>
           <div className="overflow-x-auto">
@@ -293,44 +277,32 @@ export default function DebtSayfasi() {
                 </tr>
               </thead>
               <tbody>
-                {dosyalar.map((d) => (
+                {files.map((f) => (
                   <tr
-                    key={d.dosya_yolu}
+                    key={f.file_path}
                     className="border-b border-gray-800/50 last:border-0 hover:bg-gray-800/30 transition-colors"
                   >
-                    <td
-                      className="py-2.5 font-mono text-xs text-gray-300 max-w-[240px] truncate"
-                      title={d.dosya_yolu}
-                    >
-                      {kisaYol(d.dosya_yolu)}
+                    <td className="py-2.5 font-mono text-xs text-gray-300 max-w-[240px] truncate" title={f.file_path}>
+                      {shortPath(f.file_path)}
                     </td>
-                    <td className="py-2.5 text-right text-gray-300">
-                      {d.debt_saatleri.toFixed(1)}h
-                    </td>
+                    <td className="py-2.5 text-right text-gray-300">{f.debt_hours.toFixed(1)}h</td>
                     <td className="py-2.5 text-right">
-                      {dolarGizli ? (
+                      {dollarsHidden ? (
                         <span className="text-gray-700 blur-sm select-none">$99</span>
-                      ) : d.aylik_maliyet_usd != null ? (
-                        <span className={riskTailwind(d.risk_seviyesi)}>
-                          ${d.aylik_maliyet_usd.toFixed(2)}
-                        </span>
+                      ) : f.monthly_cost_usd != null ? (
+                        <span className={riskTailwind(f.risk_level)}>${f.monthly_cost_usd.toFixed(2)}</span>
                       ) : (
                         <span className="text-gray-600">—</span>
                       )}
                     </td>
                     <td className="py-2.5 text-center">
-                      <span
-                        className={`text-xs font-semibold px-2 py-0.5 rounded-full ${
-                          d.risk_seviyesi === "KRİTİK"
-                            ? "bg-red-500/20 text-red-400"
-                            : d.risk_seviyesi === "YÜKSEK"
-                            ? "bg-orange-500/20 text-orange-400"
-                            : d.risk_seviyesi === "ORTA"
-                            ? "bg-yellow-500/20 text-yellow-400"
-                            : "bg-green-500/20 text-green-400"
-                        }`}
-                      >
-                        {d.risk_seviyesi}
+                      <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${
+                        f.risk_level === "CRITICAL" ? "bg-red-500/20 text-red-400"
+                        : f.risk_level === "HIGH" ? "bg-orange-500/20 text-orange-400"
+                        : f.risk_level === "MEDIUM" ? "bg-yellow-500/20 text-yellow-400"
+                        : "bg-green-500/20 text-green-400"
+                      }`}>
+                        {f.risk_level}
                       </span>
                     </td>
                   </tr>
@@ -339,7 +311,7 @@ export default function DebtSayfasi() {
             </table>
           </div>
 
-          {dolarGizli && (
+          {dollarsHidden && (
             <p className="mt-4 text-xs text-amber-400/70 text-center">
               🔒 {t("debt_locked_pro")}
             </p>

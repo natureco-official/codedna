@@ -1,48 +1,48 @@
 "use client";
 
 /**
- * Auth context — giriş durumunu ve kullanıcı bilgisini uygulama genelinde yönetir.
+ * Auth context — manages login state and user info app-wide.
  */
 
 import { createContext, useContext, useEffect, useState, useCallback } from "react";
-import { benimKimligim, cikisYap, KullaniciVeri } from "@/lib/auth";
+import { getCurrentUser, logout, UserData } from "@/lib/auth";
 
 interface AuthContextValue {
-  kullanici: KullaniciVeri | null;
-  yukleniyor: boolean;
-  yenile: () => Promise<void>;
-  cikis: () => Promise<void>;
+  user: UserData | null;
+  loading: boolean;
+  refresh: () => Promise<void>;
+  signOut: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue>({
-  kullanici: null,
-  yukleniyor: true,
-  yenile: async () => {},
-  cikis: async () => {},
+  user: null,
+  loading: true,
+  refresh: async () => {},
+  signOut: async () => {},
 });
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [kullanici, setKullanici] = useState<KullaniciVeri | null>(null);
-  const [yukleniyor, setYukleniyor] = useState(true);
+  const [user, setUser] = useState<UserData | null>(null);
+  const [loading, setLoading] = useState(true);
 
-  const yenile = useCallback(async () => {
-    setYukleniyor(true);
-    const veri = await benimKimligim();
-    setKullanici(veri);
-    setYukleniyor(false);
+  const refresh = useCallback(async () => {
+    setLoading(true);
+    const data = await getCurrentUser();
+    setUser(data);
+    setLoading(false);
   }, []);
 
-  const cikis = useCallback(async () => {
-    await cikisYap();
-    setKullanici(null);
+  const signOut = useCallback(async () => {
+    await logout();
+    setUser(null);
   }, []);
 
   useEffect(() => {
-    yenile();
-  }, [yenile]);
+    refresh();
+  }, [refresh]);
 
   return (
-    <AuthContext.Provider value={{ kullanici, yukleniyor, yenile, cikis }}>
+    <AuthContext.Provider value={{ user, loading, refresh, signOut }}>
       {children}
     </AuthContext.Provider>
   );

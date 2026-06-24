@@ -1,10 +1,10 @@
 """
-Aday değerlendirme — kodbase anlama testi.
+Candidate evaluation — codebase comprehension test.
 
-ÖNEMLİ UYARI:
-  Bu araç insan değerlendirmesinin YERİNE GEÇMEZ. Tamamlayıcı bir sinyaldir.
-  Tek başına işe alım kararı için kullanılmamalıdır.
-  Otomatik puanlama bu fazda eklenmiyor — insan değerlendiricisi skorу manuel girer.
+IMPORTANT WARNING:
+  This tool does NOT replace human evaluation. It is a supplementary signal.
+  It must not be used as the sole basis for hiring decisions.
+  Automatic scoring is intentionally excluded — the human evaluator enters scores manually.
 """
 
 from __future__ import annotations
@@ -18,15 +18,15 @@ from typing import Optional
 
 from codedna.db import get_connection
 
-# Zorluk → karmaşıklık skoru eşikleri
-_ZORLU_ESIKLER = {
-    "easy":   (0.0, 5.0),   # düşük karmaşıklık
-    "medium": (5.0, 15.0),  # orta karmaşıklık
-    "hard":   (15.0, 999.),  # yüksek karmaşıklık
+# Difficulty → complexity score thresholds
+_DIFFICULTY_THRESHOLDS = {
+    "easy":   (0.0, 5.0),    # low complexity
+    "medium": (5.0, 15.0),   # medium complexity
+    "hard":   (15.0, 999.),  # high complexity
 }
 
-# Anonimleştirme: yaygın tanımlayıcı kalıpları jenerik isimlerle değiştir
-_ANONIMLESTIME_KALIPLARI: list[tuple[str, str]] = [
+# Anonymization: replace common identifiers with generic names
+_ANONYMIZATION_PATTERNS: list[tuple[str, str]] = [
     (r'\b(payment|charge|invoice|billing)\b', 'transaction'),
     (r'\b(user|account|customer|member)\b', 'entity'),
     (r'\b(password|secret|token|key|credential)\b', 'credential'),
@@ -36,143 +36,141 @@ _ANONIMLESTIME_KALIPLARI: list[tuple[str, str]] = [
 
 
 @dataclass
-class MulakatDosyasi:
-    """Mülakat için seçilmiş dosya bilgisi."""
+class CandidateFile:
+    """File information selected for an interview."""
 
-    dosya_yolu: str
-    anonimlestirilmis_kod: str
-    karmasiklik_skoru: float
-    zorluk: str
-    satir_sayisi: int
+    file_path: str           # kept for API compatibility (was: dosya_yolu)
+    anonymized_code: str  # kept for API compatibility (was: anonimlestirilmis_kod)
+    complexity_score: float    # kept for API compatibility (was: karmasiklik_skoru)
+    difficulty: str
+    line_count: int           # kept for API compatibility (was: satir_sayisi)
 
 
-def _kod_anonimize_et(kod: str) -> str:
+def _anonymize_code(code: str) -> str:
     """
-    Kaynak kodu anonimleştir — iş mantığını açık eden tanımlayıcıları
-    jenerik isimlerle değiştir. Kod yapısını ve mantığını korur.
+    Anonymize source code — replace identifiers that reveal business logic
+    with generic names. Preserves code structure and logic.
 
     Args:
-        kod: Ham kaynak kodu
+        code: Raw source code
 
     Returns:
-        Anonimleştirilmiş kod
+        Anonymized code
     """
-    sonuc = kod
-    for kalip, yeni in _ANONIMLESTIME_KALIPLARI:
-        sonuc = re.sub(kalip, yeni, sonuc, flags=re.IGNORECASE)
-    return sonuc
+    result = code
+    for pattern, replacement in _ANONYMIZATION_PATTERNS:
+        result = re.sub(pattern, replacement, result, flags=re.IGNORECASE)
+    return result
 
 
 def select_candidate_file(
     repo_path: Path,
     db_path: Path,
     difficulty: str = "medium",
-) -> Optional[MulakatDosyasi]:
+) -> Optional[CandidateFile]:
     """
-    Repo'dan mülakat için uygun bir dosya seç.
+    Select a suitable file from the repo for an interview.
 
-    Seçim kriterleri:
-      - İstenen zorluk aralığındaki karmaşıklık skoru
-      - Korumalı modüller HİÇBİR ZAMAN seçilmez
-      - En az 20, en fazla 200 satır
-      - Desteklenen uzantı (.py, .js, .ts)
+    Selection criteria:
+      - Complexity score within the requested difficulty range
+      - Protected modules are NEVER selected
+      - At least 20, at most 200 lines
+      - Supported extension (.py, .js, .ts)
 
     Args:
-        repo_path: Git repo kök dizini
-        db_path: SQLite veritabanı yolu
+        repo_path: Git repo root directory
+        db_path: SQLite database path
         difficulty: "easy" | "medium" | "hard"
 
     Returns:
-        MulakatDosyasi nesnesi veya uygun dosya yoksa None
+        CandidateFile object, or None if no suitable file found
     """
     from codedna.scorer import scan_repository
     from codedna.protection import check_protected_modules
 
-    alt_esik, ust_esik = _ZORLU_ESIKLER.get(difficulty, _ZORLU_ESIKLER["medium"])
+    low, high = _DIFFICULTY_THRESHOLDS.get(difficulty, _DIFFICULTY_THRESHOLDS["medium"])
 
-    # Korumalı modülleri al — bunlar asla seçilmez
-    korunanlari = {
-        m.dosya_yolu
-        for m in check_protected_modules(db_path)
-    }
+    # Get protected modules — never select these
+    protected = {m.file_path for m in check_protected_modules(db_path)}
 
-    taranan = scan_repository(repo_path, max_files=200)
+    scanned = scan_repository(repo_path, max_files=200)
 
-    uygun = [
-        s for s in taranan
-        if alt_esik <= s.complexity_score < ust_esik
-        and s.file_path not in korunanlari
+    eligible = [
+        s for s in scanned
+        if low <= s.complexity_score < high
+        and s.file_path not in protected
         and 20 <= s.total_lines <= 200
     ]
 
-    if not uygun:
+    if not eligible:
         return None
 
-    # En ortanca karmaşıklığa sahip dosyayı seç (çok kolay/zor olmasın)
-    uygun.sort(key=lambda s: abs(s.complexity_score - (alt_esik + ust_esik) / 2))
-    secilen = uygun[0]
+    # Select the file closest to the midpoint complexity (not too easy/hard)
+    eligible.sort(key=lambda s: abs(s.complexity_score - (low + high) / 2))
+    selected = eligible[0]
 
     try:
-        kod = Path(secilen.file_path).read_text(encoding="utf-8", errors="replace")
+        code = Path(selected.file_path).read_text(encoding="utf-8", errors="replace")
     except Exception:
         return None
 
-    anonimlestirilmis = _kod_anonimize_et(kod)
+    anonymized = _anonymize_code(code)
 
-    return MulakatDosyasi(
-        dosya_yolu=secilen.file_path,
-        anonimlestirilmis_kod=anonimlestirilmis,
-        karmasiklik_skoru=round(secilen.complexity_score, 1),
-        zorluk=difficulty,
-        satir_sayisi=secilen.total_lines,
+    return CandidateFile(
+        file_path=selected.file_path,
+        anonymized_code=anonymized,
+        complexity_score=round(selected.complexity_score, 1),
+        difficulty=difficulty,
+        line_count=selected.total_lines,
     )
 
 
 def generate_questions(code: str) -> list[str]:
     """
-    Koddan otomatik 3 anlama sorusu üret.
+    Automatically generate 3 comprehension questions from code.
 
-    Şablon tabanlı üretim — AI çağrısı gerektirmez, kod yapısından çıkarım.
-    Üretilen sorular her zaman genel, spesifik iş mantığına bağlı değil.
+    Template-based generation — no AI call required, inferred from code structure.
+    Generated questions are always generic, not tied to specific business logic.
 
     Args:
-        code: Kaynak kodu (anonimleştirilmiş olabilir)
+        code: Source code (may be anonymized)
 
     Returns:
-        3 soruluk liste
+        List of 3 questions
     """
-    satirlar = code.splitlines()
-    fonksiyon_sayisi = sum(
-        1 for s in satirlar
-        if re.match(r'\s*(def |function |async function )', s)
+    lines = code.splitlines()
+    function_count = sum(
+        1 for line in lines
+        if re.match(r'\s*(def |function |async function )', line)
     )
-    kos_sayisi = sum(
-        1 for s in satirlar
-        if re.search(r'\b(if|else|elif|for|while|try|except|catch)\b', s)
+    branch_count = sum(
+        1 for line in lines
+        if re.search(r'\b(if|else|elif|for|while|try|except|catch)\b', line)
     )
-    donduruyor_mu = any("return " in s for s in satirlar)
+    has_return = any("return " in line for line in lines)
 
-    sorular = [
-        "Bu kodu okuduğunuzda ana fonksiyonun/metodun birincil amacı ne?",
-        f"Bu kod {fonksiyon_sayisi} fonksiyon/metod içeriyor. "
-        f"Hangisi en kritik iş mantığını taşıyor ve neden?",
+    questions = [
+        "After reading this code, what is the primary purpose of the main function/method?",
+        f"This code contains {function_count} function(s)/method(s). "
+        f"Which one carries the most critical business logic, and why?",
     ]
 
-    if kos_sayisi > 3:
-        sorular.append(
-            f"Kodda {kos_sayisi} dal/koşul var. Hangi koşul en önemli hata senaryosunu ele alıyor?"
+    if branch_count > 3:
+        questions.append(
+            f"There are {branch_count} branches/conditions in the code. "
+            f"Which condition handles the most important error scenario?"
         )
-    elif donduruyor_mu:
-        sorular.append(
-            "Bu fonksiyon hangi koşulda beklenmedik bir değer döndürebilir? "
-            "Bu durumu nasıl debug ederdiniz?"
+    elif has_return:
+        questions.append(
+            "Under what condition could this function return an unexpected value? "
+            "How would you debug that scenario?"
         )
     else:
-        sorular.append(
-            "Bu koda bir test yazmanız gerekse, önce hangi davranışı test ederdiniz?"
+        questions.append(
+            "If you had to write a test for this code, which behavior would you test first?"
         )
 
-    return sorular[:3]
+    return questions[:3]
 
 
 def start_session(
@@ -183,17 +181,17 @@ def start_session(
     created_by: str = "system",
 ) -> int:
     """
-    Yeni mülakat oturumu başlat.
+    Start a new interview session.
 
     Args:
-        candidate_name: Aday adı
-        file_path: Test edilen dosyanın yolu
-        questions: Sorulan soru listesi
-        db_path: SQLite veritabanı yolu
-        created_by: Oturumu başlatan kişi
+        candidate_name: Candidate name
+        file_path: Path of the file being tested
+        questions: List of questions asked
+        db_path: SQLite database path
+        created_by: Who started the session
 
     Returns:
-        Yeni oturum id'si
+        New session id
     """
     with get_connection(db_path) as conn:
         cur = conn.execute(
@@ -220,24 +218,24 @@ def submit_score(
     db_path: Path,
 ) -> dict:
     """
-    İnsan değerlendiricinin verdiği puanı kaydet.
+    Save the score given by the human evaluator.
 
-    Otomatik puanlama kasıtlı olarak yok — yanıltıcı olabileceğinden
-    bu fazda insan değerlendirmesi zorunlu tutulmuştur.
+    Automatic scoring is intentionally absent — it can be misleading,
+    so human evaluation is required in this phase.
 
     Args:
-        session_id: Oturum id'si
-        score: 0.0–5.0 arası puan
-        evaluator_notes: Değerlendirici notları
-        db_path: SQLite veritabanı yolu
+        session_id: Session id
+        score: Score between 0.0 and 5.0
+        evaluator_notes: Evaluator notes
+        db_path: SQLite database path
 
     Returns:
-        Güncellenen oturum özeti
+        Updated session summary
     """
     if not (0.0 <= score <= 5.0):
-        raise ValueError(f"Skor 0.0–5.0 arasında olmalı, gelen: {score}")
+        raise ValueError(f"Score must be between 0.0 and 5.0, got: {score}")
 
-    su_an = int(time.time())
+    now = int(time.time())
     with get_connection(db_path) as conn:
         cur = conn.execute(
             """
@@ -247,21 +245,21 @@ def submit_score(
                 completed_at        = ?
             WHERE id = ?
             """,
-            (score, evaluator_notes, su_an, session_id),
+            (score, evaluator_notes, now, session_id),
         )
         if cur.rowcount == 0:
-            raise ValueError(f"Oturum #{session_id} bulunamadı.")
+            raise ValueError(f"Session #{session_id} not found.")
 
     return {
         "session_id": session_id,
         "comprehension_score": score,
         "evaluator_notes": evaluator_notes,
-        "mesaj": "Değerlendirme kaydedildi.",
+        "message": "Evaluation saved.",
     }
 
 
 def get_sessions(db_path: Path, limit: int = 20) -> list[dict]:
-    """Geçmiş mülakat oturumlarını döndür."""
+    """Return past interview sessions."""
     try:
         with get_connection(db_path) as conn:
             rows = conn.execute(
@@ -286,13 +284,13 @@ def get_sessions(db_path: Path, limit: int = 20) -> list[dict]:
     return [
         {
             "id": r["id"],
-            "aday": r["candidate_name"],
-            "dosya_yolu": r["file_path"],
-            "baslangic": _ts(r["started_at"]),
-            "bitis": _ts(r["completed_at"]),
-            "skor": r["comprehension_score"],
-            "notlar": r["evaluator_notes"],
-            "olusturan": r["created_by"],
+            "candidate": r["candidate_name"],
+            "file_path": r["file_path"],
+            "start_time": _ts(r["started_at"]),
+            "end_time": _ts(r["completed_at"]),
+            "score": r["comprehension_score"],
+            "notes": r["evaluator_notes"],
+            "created_by": r["created_by"],
         }
         for r in rows
     ]

@@ -2,7 +2,7 @@
 
 import { useTranslation } from "@/lib/i18n";
 
-/** Risk seviyesini renkli badge olarak gösterir */
+/** Displays risk level as a colored badge */
 export function RiskBadge({
   risk,
   size = "md",
@@ -12,20 +12,14 @@ export function RiskBadge({
 }) {
   const { t } = useTranslation();
 
-  // API'den gelen değer (TR veya EN) → normalize et → t() ile çevir
-  const renkMap: Record<string, string> = {
+  const colorMap: Record<string, string> = {
     HIGH:    "bg-red-500/20 text-red-400 border border-red-500/30",
     MEDIUM:  "bg-yellow-500/20 text-yellow-400 border border-yellow-500/30",
     LOW:     "bg-green-500/20 text-green-400 border border-green-500/30",
     UNKNOWN: "bg-gray-500/20 text-gray-400 border border-gray-500/30",
-    // API Türkçe döndürüyor — her ikisini destekle
-    YÜKSEK:    "bg-red-500/20 text-red-400 border border-red-500/30",
-    ORTA:      "bg-yellow-500/20 text-yellow-400 border border-yellow-500/30",
-    DÜŞÜK:     "bg-green-500/20 text-green-400 border border-green-500/30",
-    BİLİNMİYOR: "bg-gray-500/20 text-gray-400 border border-gray-500/30",
   };
 
-  const boyutMap = {
+  const sizeMap = {
     sm: "px-2 py-0.5 text-xs",
     md: "px-3 py-1 text-sm",
     lg: "px-4 py-1.5 text-base",
@@ -33,20 +27,22 @@ export function RiskBadge({
 
   const normalize = (r: string): string => {
     const map: Record<string, string> = {
-      YÜKSEK: "risk_high", ORTA: "risk_medium",
-      DÜŞÜK: "risk_low", BİLİNMİYOR: "risk_unknown",
+      // English keys
       HIGH: "risk_high", MEDIUM: "risk_medium",
       LOW: "risk_low", UNKNOWN: "risk_unknown",
+      // Turkish legacy keys (in case old API response slips through)
+      YÜKSEK: "risk_high", ORTA: "risk_medium",
+      DÜŞÜK: "risk_low", BİLİNMİYOR: "risk_unknown",
     };
     return map[r.toUpperCase()] ?? "risk_unknown";
   };
 
-  const upper = risk?.toUpperCase() ?? "BİLİNMİYOR";
-  const renk = renkMap[upper] ?? renkMap["BİLİNMİYOR"];
+  const upper = risk?.toUpperCase() ?? "UNKNOWN";
+  const color = colorMap[upper] ?? colorMap["UNKNOWN"];
   const label = t(normalize(upper) as Parameters<typeof t>[0]);
 
   return (
-    <span className={`inline-block font-semibold rounded-full ${renk} ${boyutMap[size]}`}>
+    <span className={`inline-block font-semibold rounded-full ${color} ${sizeMap[size]}`}>
       {label}
     </span>
   );

@@ -1,4 +1,4 @@
-"""Lemon Squeezy checkout ve abonelik webhook entegrasyonu."""
+"""Lemon Squeezy checkout and subscription webhook integration."""
 
 from __future__ import annotations
 
@@ -10,57 +10,57 @@ from pathlib import Path
 from typing import Optional
 
 # ---------------------------------------------------------------------------
-# Ortam değişkenleri — koda gömülmez
+# Environment variables — never hardcoded
 # ---------------------------------------------------------------------------
 
-LEMONSQUEEZY_API_KEY = os.environ.get("LEMONSQUEEZY_API_KEY")
+LEMONSQUEEZY_API_KEY      = os.environ.get("LEMONSQUEEZY_API_KEY")
 LEMONSQUEEZY_WEBHOOK_SECRET = os.environ.get("LEMONSQUEEZY_WEBHOOK_SECRET")
-LEMONSQUEEZY_STORE_ID = os.environ.get("LEMONSQUEEZY_STORE_ID")
+LEMONSQUEEZY_STORE_ID     = os.environ.get("LEMONSQUEEZY_STORE_ID")
 
-# Plan → Lemon Squeezy variant ID eşlemesi (gerçek ID'ler .env'den)
+# Plan → Lemon Squeezy variant ID mapping (real IDs come from .env)
 PLAN_VARIANT_MAP: dict[str, Optional[str]] = {
     "pro":        os.environ.get("LS_VARIANT_PRO"),
     "team":       os.environ.get("LS_VARIANT_TEAM"),
     "enterprise": os.environ.get("LS_VARIANT_ENTERPRISE"),
 }
 
-# Lemon Squeezy API temel URL'i
+# Lemon Squeezy API base URL
 _LS_API_BASE = "https://api.lemonsqueezy.com/v1"
 
 
 # ---------------------------------------------------------------------------
-# Webhook imza doğrulama
+# Webhook signature verification
 # ---------------------------------------------------------------------------
 
 def verify_webhook_signature(payload: bytes, signature: str) -> bool:
     """
-    Lemon Squeezy webhook imzasını HMAC-SHA256 ile doğrula.
+    Verify a Lemon Squeezy webhook signature using HMAC-SHA256.
 
-    Lemon Squeezy, X-Signature header'ında hex digest gönderir.
-    hmac.compare_digest ile timing-safe karşılaştırma yapılır.
+    Lemon Squeezy sends a hex digest in the X-Signature header.
+    Uses hmac.compare_digest for timing-safe comparison.
 
     Args:
-        payload: Ham HTTP body (bytes)
-        signature: X-Signature header değeri
+        payload: Raw HTTP body (bytes)
+        signature: X-Signature header value
 
     Returns:
-        İmza geçerliyse True
+        True if the signature is valid
     """
     secret = LEMONSQUEEZY_WEBHOOK_SECRET
     if not secret:
         return False
 
-    hesaplanan = hmac.new(
+    computed = hmac.new(
         secret.encode("utf-8"),
         payload,
         hashlib.sha256,
     ).hexdigest()
 
-    return hmac.compare_digest(hesaplanan, signature)
+    return hmac.compare_digest(computed, signature)
 
 
 # ---------------------------------------------------------------------------
-# Checkout URL oluşturma
+# Checkout URL creation
 # ---------------------------------------------------------------------------
 
 def create_checkout_url(
@@ -69,44 +69,44 @@ def create_checkout_url(
     user_id: int,
 ) -> str:
     """
-    Lemon Squeezy Checkout API'sine istek at ve hosted checkout URL'ini döndür.
+    Request the Lemon Squeezy Checkout API and return the hosted checkout URL.
 
-    custom_data içine user_id gömülür — webhook'ta hangi kullanıcıya ait
-    olduğunu eşleştirmek için kullanılır.
+    user_id is embedded in custom_data to match the webhook to the correct user.
 
-    Dokümantasyon: https://docs.lemonsqueezy.com/api/checkouts
+    Docs: https://docs.lemonsqueezy.com/api/checkouts
 
     Args:
         plan: "pro" | "team" | "enterprise"
-        user_email: Kullanıcının e-posta adresi (checkout'ta ön doldurulur)
-        user_id: Kullanıcı ID'si (webhook eşleştirmesi için)
+        user_email: User's email address (pre-filled in checkout)
+        user_id: User ID (for webhook matching)
 
     Returns:
-        Checkout URL string'i
+        Checkout URL string
 
     Raises:
-        ValueError: API anahtarı veya variant ID eksikse
-        RuntimeError: API isteği başarısız olursa
+        ValueError: If API key or variant ID is missing
+        RuntimeError: If the API request fails
     """
     import urllib.request
+    import urllib.error
 
-    api_key = LEMONSQUEEZY_API_KEY
-    store_id = LEMONSQUEEZY_STORE_ID
+    api_key    = LEMONSQUEEZY_API_KEY
+    store_id   = LEMONSQUEEZY_STORE_ID
     variant_id = PLAN_VARIANT_MAP.get(plan)
 
     if not api_key:
         raise ValueError(
-            "LEMONSQUEEZY_API_KEY ortam değişkeni tanımlanmamış. "
-            ".env.example dosyasına bakın."
+            "LEMONSQUEEZY_API_KEY environment variable is not set. "
+            "See .env.example."
         )
     if not store_id:
-        raise ValueError("LEMONSQUEEZY_STORE_ID ortam değişkeni tanımlanmamış.")
+        raise ValueError("LEMONSQUEEZY_STORE_ID environment variable is not set.")
     if not variant_id:
         raise ValueError(
-            f"LS_VARIANT_{plan.upper()} ortam değişkeni tanımlanmamış."
+            f"LS_VARIANT_{plan.upper()} environment variable is not set."
         )
 
-    istek_govdesi = json.dumps({
+    body = json.dumps({
         "data": {
             "type": "checkouts",
             "attributes": {
@@ -116,19 +116,15 @@ def create_checkout_url(
                 },
             },
             "relationships": {
-                "store": {
-                    "data": {"type": "stores", "id": str(store_id)}
-                },
-                "variant": {
-                    "data": {"type": "variants", "id": str(variant_id)}
-                },
+                "store":   {"data": {"type": "stores",   "id": str(store_id)}},
+                "variant": {"data": {"type": "variants", "id": str(variant_id)}},
             },
         }
     }).encode("utf-8")
 
-    istek = urllib.request.Request(
+    request = urllib.request.Request(
         f"{_LS_API_BASE}/checkouts",
-        data=istek_govdesi,
+        data=body,
         headers={
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/vnd.api+json",
@@ -138,27 +134,25 @@ def create_checkout_url(
     )
 
     try:
-        with urllib.request.urlopen(istek, timeout=10) as yanit:
-            veri = json.loads(yanit.read())
-            return veri["data"]["attributes"]["url"]
+        with urllib.request.urlopen(request, timeout=10) as response:
+            data = json.loads(response.read())
+            return data["data"]["attributes"]["url"]
     except urllib.error.HTTPError as e:
-        hata_govdesi = e.read().decode("utf-8", errors="replace")
-        raise RuntimeError(
-            f"Lemon Squeezy API hatası ({e.code}): {hata_govdesi}"
-        )
+        error_body = e.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"Lemon Squeezy API error ({e.code}): {error_body}")
     except Exception as e:
-        raise RuntimeError(f"Checkout URL oluşturulamadı: {e}")
+        raise RuntimeError(f"Could not create checkout URL: {e}")
 
 
 # ---------------------------------------------------------------------------
-# Webhook event işleme
+# Webhook event handling
 # ---------------------------------------------------------------------------
 
-# LS event → (plan, subscription_status) eşlemesi
-_EVENT_DURUM_MAP: dict[str, tuple[Optional[str], str]] = {
-    "subscription_created":        (None,   "active"),     # plan custom_data'dan alınır
+# LS event → (plan, subscription_status) mapping
+_EVENT_STATUS_MAP: dict[str, tuple[Optional[str], str]] = {
+    "subscription_created":        (None,   "active"),     # plan determined from custom_data
     "subscription_updated":        (None,   "active"),
-    "subscription_cancelled":      (None,   "cancelled"),  # plan hemen düşürülmez
+    "subscription_cancelled":      (None,   "cancelled"),  # plan not immediately downgraded
     "subscription_expired":        ("free", "none"),
     "subscription_payment_failed": (None,   "past_due"),
 }
@@ -169,68 +163,67 @@ def handle_subscription_webhook(
     db_path: Path,
 ) -> dict:
     """
-    Lemon Squeezy webhook event'lerini işle ve kullanıcı planını güncelle.
+    Process Lemon Squeezy webhook events and update the user's plan.
 
-    Tüm event'lerde custom_data.user_id ile kullanıcı eşleştirilir.
+    user_id from custom_data is used to match the user for all events.
 
     Args:
-        payload: Webhook JSON payload'u
-        db_path: Auth DB yolu
+        payload: Webhook JSON payload
+        db_path: Auth DB path
 
     Returns:
-        İşlem sonucu sözlüğü
+        Dict with operation result
     """
     from codedna.auth import update_user_plan, init_auth_db
 
     init_auth_db(db_path)
 
-    event_turu = payload.get("meta", {}).get("event_name", "")
-    if event_turu not in _EVENT_DURUM_MAP:
-        return {"durum": "atlandı", "event": event_turu}
+    event_type = payload.get("meta", {}).get("event_name", "")
+    if event_type not in _EVENT_STATUS_MAP:
+        return {"status": "skipped", "event": event_type}
 
-    # Kullanıcı ID'sini custom_data'dan al
+    # Get user ID from custom_data
     custom_data = payload.get("meta", {}).get("custom_data", {})
-    user_id_str = custom_data.get("user_id") or custom_data.get("user_id")
+    user_id_str = custom_data.get("user_id")
     if not user_id_str:
-        return {"durum": "hata", "neden": "custom_data.user_id eksik"}
+        return {"status": "error", "reason": "custom_data.user_id missing"}
 
     try:
         user_id = int(user_id_str)
     except (ValueError, TypeError):
-        return {"durum": "hata", "neden": f"Geçersiz user_id: {user_id_str!r}"}
+        return {"status": "error", "reason": f"Invalid user_id: {user_id_str!r}"}
 
-    # Abonelik verilerini al
-    abonelik = payload.get("data", {}).get("attributes", {})
-    customer_id = str(abonelik.get("customer_id", "")) or None
+    # Get subscription data
+    subscription = payload.get("data", {}).get("attributes", {})
+    customer_id    = str(subscription.get("customer_id", "")) or None
     subscription_id = str(payload.get("data", {}).get("id", "")) or None
 
-    # Planı belirle
-    yeni_plan, yeni_durum = _EVENT_DURUM_MAP[event_turu]
+    # Determine plan
+    new_plan, new_status = _EVENT_STATUS_MAP[event_type]
 
-    # subscription_created/updated için plan variant'tan belirle
-    if yeni_plan is None:
-        variant_id = str(abonelik.get("variant_id", ""))
-        # Variant ID → plan eşlemesi (ters yön)
-        for plan_adi, vid in PLAN_VARIANT_MAP.items():
+    # For subscription_created/updated, determine plan from variant
+    if new_plan is None:
+        variant_id = str(subscription.get("variant_id", ""))
+        for plan_name, vid in PLAN_VARIANT_MAP.items():
             if vid and vid == variant_id:
-                yeni_plan = plan_adi
+                new_plan = plan_name
                 break
-        if yeni_plan is None:
-            yeni_plan = "pro"  # bilinmeyen variant → pro varsayılan
+        if new_plan is None:
+            new_plan = "pro"  # unknown variant → default to pro
 
     update_user_plan(
         user_id=user_id,
-        plan=yeni_plan,
-        subscription_status=yeni_durum,
+        plan=new_plan,
+        subscription_status=new_status,
         customer_id=customer_id,
         subscription_id=subscription_id,
         db_path=db_path,
     )
 
     return {
-        "durum": "güncellendi",
+        "status": "updated",
         "user_id": user_id,
-        "yeni_plan": yeni_plan,
-        "subscription_status": yeni_durum,
-        "event": event_turu,
+        "new_plan": new_plan,
+        "subscription_status": new_status,
+        "event": event_type,
     }

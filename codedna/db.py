@@ -1,4 +1,4 @@
-"""SQLite veritabanı CRUD işlemleri."""
+"""SQLite database CRUD operations."""
 
 import sqlite3
 from contextlib import contextmanager
@@ -6,12 +6,12 @@ from datetime import datetime
 from pathlib import Path
 from typing import Generator, Optional
 
-# Varsayılan veritabanı yolu
+# Default database path
 DB_PATH = Path.home() / ".codedna" / "codedna.db"
 
 
 def get_db_path(repo_path: Optional[Path] = None) -> Path:
-    """Repo'ya özgü veritabanı yolunu döndür."""
+    """Return the repo-specific database path."""
     if repo_path:
         return repo_path / ".codedna.db"
     return DB_PATH
@@ -19,7 +19,7 @@ def get_db_path(repo_path: Optional[Path] = None) -> Path:
 
 @contextmanager
 def get_connection(db_path: Optional[Path] = None) -> Generator[sqlite3.Connection, None, None]:
-    """SQLite bağlantısını context manager ile yönet."""
+    """Manage a SQLite connection with a context manager."""
     path = db_path or DB_PATH
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(path))
@@ -35,7 +35,7 @@ def get_connection(db_path: Optional[Path] = None) -> Generator[sqlite3.Connecti
 
 
 def init_db(db_path: Optional[Path] = None) -> None:
-    """Veritabanı şemasını oluştur (yoksa)."""
+    """Create the database schema if it does not exist."""
     with get_connection(db_path) as conn:
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS commits (
@@ -117,7 +117,7 @@ def save_commit(
     understanding_score: Optional[float],
     db_path: Optional[Path] = None,
 ) -> None:
-    """Commit bilgisini kaydet veya güncelle."""
+    """Save or update a commit record."""
     with get_connection(db_path) as conn:
         conn.execute(
             """
@@ -139,7 +139,7 @@ def save_file_score(
     understanding_score: Optional[float] = None,
     db_path: Optional[Path] = None,
 ) -> None:
-    """Dosya analiz skorunu kaydet."""
+    """Save a file analysis score."""
     with get_connection(db_path) as conn:
         conn.execute(
             """
@@ -152,7 +152,7 @@ def save_file_score(
 
 
 def get_commit_history(limit: int = 20, db_path: Optional[Path] = None) -> list[sqlite3.Row]:
-    """Son N commit'i tarihe göre sıralı getir."""
+    """Return the last N commits sorted by date."""
     with get_connection(db_path) as conn:
         rows = conn.execute(
             """
@@ -166,7 +166,7 @@ def get_commit_history(limit: int = 20, db_path: Optional[Path] = None) -> list[
 
 
 def get_file_scores_for_commit(commit_hash: str, db_path: Optional[Path] = None) -> list[sqlite3.Row]:
-    """Belirli bir commit'e ait dosya skorlarını getir."""
+    """Return file scores for a specific commit."""
     with get_connection(db_path) as conn:
         rows = conn.execute(
             "SELECT * FROM file_scores WHERE commit_hash = ?",
@@ -176,7 +176,7 @@ def get_file_scores_for_commit(commit_hash: str, db_path: Optional[Path] = None)
 
 
 def get_latest_commit(db_path: Optional[Path] = None) -> Optional[sqlite3.Row]:
-    """En son kaydedilen commit'i getir."""
+    """Return the most recently saved commit."""
     with get_connection(db_path) as conn:
         row = conn.execute(
             "SELECT * FROM commits ORDER BY timestamp DESC LIMIT 1"
@@ -187,7 +187,7 @@ def get_latest_commit(db_path: Optional[Path] = None) -> Optional[sqlite3.Row]:
 def get_latest_understanding_for_file(
     file_path: str, db_path: Optional[Path] = None
 ) -> Optional[float]:
-    """Belirli bir dosyanın en son anlama skorunu getir."""
+    """Return the most recent understanding score for a specific file."""
     with get_connection(db_path) as conn:
         row = conn.execute(
             """
@@ -207,8 +207,8 @@ def get_all_file_understanding_scores(
     db_path: Optional[Path] = None,
 ) -> dict[str, float]:
     """
-    Tüm dosyaların en son anlama skorlarını dict olarak getir.
-    {file_path: understanding_score} formatında döner.
+    Return the most recent understanding score for all files as a dict.
+    Format: {file_path: understanding_score}.
     """
     with get_connection(db_path) as conn:
         rows = conn.execute(
@@ -229,13 +229,13 @@ def update_understanding_score(
     understanding_score: float,
     db_path: Optional[Path] = None,
 ) -> None:
-    """Commit'in ve ilgili dosyaların anlama skorunu güncelle."""
+    """Update the understanding score for a commit and its associated files."""
     with get_connection(db_path) as conn:
         conn.execute(
             "UPDATE commits SET understanding_score = ? WHERE commit_hash = ?",
             (understanding_score, commit_hash),
         )
-        # Aynı commit'e ait tüm dosya skorlarını da güncelle
+        # Also update all file scores belonging to this commit
         conn.execute(
             "UPDATE file_scores SET understanding_score = ? WHERE commit_hash = ?",
             (understanding_score, commit_hash),
@@ -250,7 +250,7 @@ def upsert_file_ownership(
     avg_understanding: Optional[float] = None,
     db_path: Optional[Path] = None,
 ) -> None:
-    """Dosya sahiplik kaydını ekle veya güncelle."""
+    """Insert or update a file ownership record."""
     with get_connection(db_path) as conn:
         conn.execute(
             """
@@ -271,10 +271,10 @@ def get_file_ownership(
     db_path: Optional[Path] = None,
 ) -> list[sqlite3.Row]:
     """
-    Dosya sahiplik kayıtlarını getir.
+    Return file ownership records.
 
     Args:
-        file_path: Belirli bir dosya filtrele (None ise tüm dosyalar)
+        file_path: Filter by a specific file (all files if None)
     """
     with get_connection(db_path) as conn:
         if file_path:
@@ -300,7 +300,7 @@ def save_sprint(
     health_score: Optional[float],
     db_path: Optional[Path] = None,
 ) -> int:
-    """Sprint kaydı oluştur, yeni kaydın id'sini döndür."""
+    """Create a sprint record and return the new record's id."""
     with get_connection(db_path) as conn:
         cur = conn.execute(
             """
@@ -319,7 +319,7 @@ def get_sprint_history(
     limit: int = 10,
     db_path: Optional[Path] = None,
 ) -> list[sqlite3.Row]:
-    """Geçmiş sprint'leri tarihe göre sıralı getir."""
+    """Return past sprints sorted by date."""
     with get_connection(db_path) as conn:
         rows = conn.execute(
             "SELECT * FROM sprints ORDER BY start_date DESC LIMIT ?",
@@ -329,7 +329,7 @@ def get_sprint_history(
 
 
 def get_latest_sprint(db_path: Optional[Path] = None) -> Optional[sqlite3.Row]:
-    """En son sprint kaydını getir."""
+    """Return the most recent sprint record."""
     with get_connection(db_path) as conn:
         return conn.execute(
             "SELECT * FROM sprints ORDER BY start_date DESC LIMIT 1"

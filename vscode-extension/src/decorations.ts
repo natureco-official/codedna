@@ -1,16 +1,16 @@
 /**
- * CodeDNA decorations — yüksek riskli dosyalarda başlık satırına
- * hafif bir vurgu ekler. Satır bazlı vurgulama değil, dosya bazlı.
+ * CodeDNA decorations — adds a subtle highlight to the first line of
+ * high-risk files. File-level decoration, not line-level.
  */
 
 import * as vscode from "vscode";
 
-// Yüksek riskli dosya için başlık alanı decoration
+// Header area decoration for high-risk files
 const HIGH_RISK_DECORATION = vscode.window.createTextEditorDecorationType({
   isWholeLine: true,
   overviewRulerColor: new vscode.ThemeColor("charts.red"),
   overviewRulerLane: vscode.OverviewRulerLane.Right,
-  // Solda ince kırmızı çizgi — göze batmayan uyarı
+  // Thin red left border — subtle warning
   gutterIconPath: undefined,
   borderWidth: "0 0 0 3px",
   borderStyle: "solid",
@@ -29,21 +29,21 @@ const MEDIUM_RISK_DECORATION = vscode.window.createTextEditorDecorationType({
 });
 
 /**
- * Dosyanın AI riskine göre editör dekorasyonunu uygula.
- * Sadece ilk satıra (dosya başlığı) ince bir kenar vurgusu koyar.
- * Göze batmayan uyarı — çalışmayı engellemez.
+ * Apply editor decoration based on the file's AI risk level.
+ * Places a thin border highlight on the first line only (file header).
+ * Non-intrusive warning — does not block work.
  */
 export function applyRiskDecoration(
   editor: vscode.TextEditor,
   aiPct: number
 ): void {
-  // Önce mevcut dekorasyonları temizle
+  // Clear existing decorations first
   editor.setDecorations(HIGH_RISK_DECORATION, []);
   editor.setDecorations(MEDIUM_RISK_DECORATION, []);
 
-  if (aiPct < 40) return; // Düşük risk — dekorasyon yok
+  if (aiPct < 40) return; // Low risk — no decoration
 
-  // İlk satırın aralığı
+  // Range of the first line
   const firstLine = editor.document.lineAt(0);
   const range = new vscode.Range(firstLine.range.start, firstLine.range.end);
 
@@ -68,13 +68,13 @@ export function applyRiskDecoration(
   }
 }
 
-/** Tüm dekorasyonları temizle. */
+/** Clear all decorations. */
 export function clearDecorations(editor: vscode.TextEditor): void {
   editor.setDecorations(HIGH_RISK_DECORATION, []);
   editor.setDecorations(MEDIUM_RISK_DECORATION, []);
 }
 
-/** Dekorasyonları serbest bırak. */
+/** Dispose all decorations. */
 export function disposeDecorations(): void {
   HIGH_RISK_DECORATION.dispose();
   MEDIUM_RISK_DECORATION.dispose();

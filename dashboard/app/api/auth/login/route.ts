@@ -1,7 +1,7 @@
 /**
  * Next.js API Route — Login
- * FastAPI'ye istek atar, dönen JWT'yi httpOnly cookie olarak set eder.
- * Client-side JS token'a asla erişemez.
+ * Sends request to FastAPI, sets the returned JWT as httpOnly cookie.
+ * Client-side JS can never access the token.
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -9,44 +9,44 @@ import { NextRequest, NextResponse } from "next/server";
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 export async function POST(req: NextRequest) {
-  const govde = await req.json().catch(() => null);
-  if (!govde?.email || !govde?.password) {
-    return NextResponse.json({ detail: "E-posta ve şifre zorunlu." }, { status: 422 });
+  const body = await req.json().catch(() => null);
+  if (!body?.email || !body?.password) {
+    return NextResponse.json({ detail: "Email and password required." }, { status: 422 });
   }
 
-  // FastAPI'ye ilet
-  let fastapiYanit: Response;
+  // Forward to FastAPI
+  let fastapiResponse: Response;
   try {
-    fastapiYanit = await fetch(`${API_URL}/auth/login`, {
+    fastapiResponse = await fetch(`${API_URL}/auth/login`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email: govde.email, password: govde.password }),
+      body: JSON.stringify({ email: body.email, password: body.password }),
     });
   } catch {
-    return NextResponse.json({ detail: "API'ye bağlanılamadı." }, { status: 503 });
+    return NextResponse.json({ detail: "Cannot connect to API." }, { status: 503 });
   }
 
-  const veri = await fastapiYanit.json();
+  const data = await fastapiResponse.json();
 
-  if (!fastapiYanit.ok) {
-    return NextResponse.json({ detail: veri.detail || "Hata." }, { status: fastapiYanit.status });
+  if (!fastapiResponse.ok) {
+    return NextResponse.json({ detail: data.detail || "Error." }, { status: fastapiResponse.status });
   }
 
-  // Token'ı httpOnly cookie olarak set et — client JS göremez
-  const yanit = NextResponse.json({
-    user_id: veri.user_id,
-    plan: veri.plan,
-    subscription_status: veri.subscription_status,
-    email: govde.email,
+  // Set token as httpOnly cookie — client JS cannot see it
+  const response = NextResponse.json({
+    user_id: data.user_id,
+    plan: data.plan,
+    subscription_status: data.subscription_status,
+    email: body.email,
   });
 
-  yanit.cookies.set("codedna_token", veri.token, {
+  response.cookies.set("codedna_token", data.token, {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
     sameSite: "lax",
-    maxAge: 7 * 24 * 3600,  // 7 gün
+    maxAge: 7 * 24 * 3600,  // 7 days
     path: "/",
   });
 
-  return yanit;
+  return response;
 }

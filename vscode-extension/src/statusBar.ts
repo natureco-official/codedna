@@ -1,21 +1,21 @@
 /**
- * CodeDNA status bar item — dosya bazlı AI% ve risk bilgisini alt çubukta gösterir.
+ * CodeDNA status bar item — shows per-file AI% and risk info in the bottom bar.
  */
 
 import * as vscode from "vscode";
 import { getFileAnalysis, checkHealth } from "./apiClient";
 
-// Desteklenen dosya uzantıları
+// Supported file extensions
 const SUPPORTED_EXTS = new Set([".py", ".js", ".ts", ".jsx", ".tsx"]);
 
-/** Risk seviyesine göre ikon */
+/** Icon based on risk level */
 function riskIcon(pct: number): string {
   if (pct >= 70) return "$(error)";
   if (pct >= 40) return "$(warning)";
   return "$(pass)";
 }
 
-/** Risk etiketi */
+/** Risk label */
 function riskLabel(pct: number): string {
   if (pct >= 70) return "HIGH";
   if (pct >= 40) return "MED";
@@ -43,13 +43,13 @@ export class CodeDNAStatusBar {
     return vscode.workspace.getConfiguration("codedna").get<T>(key, defaultVal);
   }
 
-  /** Ayarları yeniden oku (yapılandırma değiştiğinde). */
+  /** Reload settings (when configuration changes). */
   reload(): void {
     this.apiUrl = this.getConfig("apiUrl", "http://localhost:8000");
     this.enabled = this.getConfig("enabled", true);
   }
 
-  /** Status bar'ı "bağlı değil" durumuna getir. */
+  /** Set status bar to "disconnected" state. */
   setDisconnected(): void {
     this.connected = false;
     this.item.text = "$(circle-slash) CodeDNA";
@@ -58,7 +58,7 @@ export class CodeDNAStatusBar {
     this.item.show();
   }
 
-  /** Status bar'ı analiz verisiyle güncelle. */
+  /** Update status bar with analysis data. */
   setAnalysis(aiPct: number, complexity: string, lines: number): void {
     this.connected = true;
     const icon = riskIcon(aiPct);
@@ -75,21 +75,21 @@ export class CodeDNAStatusBar {
     this.item.show();
   }
 
-  /** Yükleniyor animasyonu. */
+  /** Loading animation. */
   setLoading(): void {
     this.item.text = "$(loading~spin) CodeDNA";
     this.item.tooltip = "CodeDNA: analyzing...";
     this.item.show();
   }
 
-  /** Status bar'ı gizle. */
+  /** Hide status bar. */
   hide(): void {
     this.item.hide();
   }
 
   /**
-   * Aktif dosyayı analiz et — debounce ile (her tuş vuruşunda çalışmaz).
-   * Sunucu kapalıysa sessizce "bağlı değil" gösterir.
+   * Analyze the active file — with debounce (won't fire on every keystroke).
+   * Shows "disconnected" silently when the server is down.
    */
   analyzeFile(document: vscode.TextDocument): void {
     if (!this.enabled) {
@@ -103,7 +103,7 @@ export class CodeDNAStatusBar {
       return;
     }
 
-    // Debounce — 800ms bekle
+    // Debounce — wait 800ms
     if (this.debounceTimer) clearTimeout(this.debounceTimer);
     this.debounceTimer = setTimeout(async () => {
       await this._doAnalyze(document.fileName);
@@ -113,7 +113,7 @@ export class CodeDNAStatusBar {
   private async _doAnalyze(filePath: string): Promise<void> {
     this.setLoading();
 
-    // Önce sunucu sağlığını kontrol et
+    // Check server health first
     const alive = await checkHealth(this.apiUrl);
     if (!alive) {
       this.setDisconnected();
@@ -122,7 +122,7 @@ export class CodeDNAStatusBar {
 
     const result = await getFileAnalysis(this.apiUrl, filePath);
     if (!result) {
-      // Dosya API'de henüz taranmamış — nötr göster
+      // File not yet scanned by the API — show neutral state
       this.item.text = "$(circle-large-outline) CodeDNA";
       this.item.tooltip = "CodeDNA: file not yet analyzed — run 'codedna scan'";
       this.item.color = undefined;
@@ -130,7 +130,7 @@ export class CodeDNAStatusBar {
       return;
     }
 
-    this.setAnalysis(result.ai_yuzdesi, result.karmasiklik_etiketi, result.toplam_satir);
+    this.setAnalysis(result.ai_percentage, result.complexity_label, result.total_lines);
   }
 
   dispose(): void {

@@ -1,4 +1,4 @@
-"""GitHub PR'larına otomatik CodeDNA analiz yorumu bırakır."""
+"""Automatically posts CodeDNA analysis comments on GitHub PRs."""
 
 from __future__ import annotations
 
@@ -8,140 +8,140 @@ import urllib.error
 import urllib.request
 from typing import Optional
 
-# GitHub API temel URL'i
+# GitHub API base URL
 _GH_API = "https://api.github.com"
 
-# Yorumda kullanılan gizli marker — mevcut CodeDNA yorumunu bulmak için
-_YORUM_MARKERI = "<!-- codedna-bot-comment -->"
+# Hidden marker used in comments — to locate existing CodeDNA comments
+_COMMENT_MARKER = "<!-- codedna-bot-comment -->"
 
-# Güvenlik: token asla loglanmaz veya hata mesajlarında görünmez
+# Security: token is never logged or included in error messages
 GITHUB_TOKEN_ENV = "GITHUB_TOKEN"
 
 
 # ---------------------------------------------------------------------------
-# Yorum formatlama
+# Comment formatting
 # ---------------------------------------------------------------------------
 
 def format_pr_comment(
-    scan_sonuclari: list,
-    debt_ozeti: Optional[dict] = None,
+    scan_results: list,
+    debt_summary: Optional[dict] = None,
 ) -> str:
     """
-    Analiz sonuçlarını GitHub Markdown yorumuna dönüştür.
+    Convert analysis results into a GitHub Markdown comment.
 
-    Okunabilirlik için 2000 karakter altında tutulur.
-    ℹ️ teknik borç disclaimer'ı dahil.
+    Kept under 2000 characters for readability.
+    Includes a technical debt disclaimer.
 
     Args:
-        scan_sonuclari: FileAnalysisResult listesi
-        debt_ozeti: RepoBorcu özeti (opsiyonel)
+        scan_results: List of FileAnalysisResult objects
+        debt_summary: Repo debt summary dict (optional)
 
     Returns:
-        Markdown formatında yorum metni
+        Comment text in Markdown format
     """
-    if not scan_sonuclari:
-        return f"{_YORUM_MARKERI}\n## 🧬 CodeDNA Analizi\n\nDeğişen dosya bulunamadı.\n"
+    if not scan_results:
+        return f"{_COMMENT_MARKER}\n## 🧬 CodeDNA Analysis\n\nNo changed files found.\n"
 
-    toplam = len(scan_sonuclari)
-    ort_ai = sum(s.ai_probability for s in scan_sonuclari) / toplam
-    yuksek_risk = [s for s in scan_sonuclari if s.ai_probability >= 0.7]
+    total = len(scan_results)
+    avg_ai = sum(s.ai_probability for s in scan_results) / total
+    high_risk = [s for s in scan_results if s.ai_probability >= 0.7]
 
-    # Risk seviyesi
-    if ort_ai >= 0.7:
+    # Risk level
+    if avg_ai >= 0.7:
         risk_emoji = "🔴"
-        risk_label = "YÜKSEK"
-    elif ort_ai >= 0.4:
+        risk_label = "HIGH"
+    elif avg_ai >= 0.4:
         risk_emoji = "🟡"
-        risk_label = "ORTA"
+        risk_label = "MEDIUM"
     else:
         risk_emoji = "🟢"
-        risk_label = "DÜŞÜK"
+        risk_label = "LOW"
 
-    satirlar = [
-        _YORUM_MARKERI,
-        "## 🧬 CodeDNA Analizi",
+    lines = [
+        _COMMENT_MARKER,
+        "## 🧬 CodeDNA Analysis",
         "",
-        f"| Metrik | Değer |",
-        f"|--------|-------|",
-        f"| Analiz edilen dosya | {toplam} |",
-        f"| Ort. AI olasılığı | %{ort_ai * 100:.0f} |",
-        f"| Risk seviyesi | {risk_emoji} {risk_label} |",
-        f"| Yüksek riskli dosya (≥%70) | {len(yuksek_risk)} |",
+        "| Metric | Value |",
+        "|--------|-------|",
+        f"| Files analyzed | {total} |",
+        f"| Avg. AI probability | {avg_ai * 100:.0f}% |",
+        f"| Risk level | {risk_emoji} {risk_label} |",
+        f"| High-risk files (≥70%) | {len(high_risk)} |",
         "",
     ]
 
-    # En riskli 3 dosya
-    en_riskli = sorted(scan_sonuclari, key=lambda s: s.ai_probability, reverse=True)[:3]
-    if en_riskli:
-        satirlar.append("### ⚠️ Dikkat Gerektiren Dosyalar")
-        satirlar.append("")
-        satirlar.append("| Dosya | AI Olasılığı | Karmaşıklık |")
-        satirlar.append("|-------|-------------|------------|")
-        for s in en_riskli:
+    # Top 3 riskiest files
+    top_risky = sorted(scan_results, key=lambda s: s.ai_probability, reverse=True)[:3]
+    if top_risky:
+        lines.append("### ⚠️ Files Requiring Attention")
+        lines.append("")
+        lines.append("| File | AI Probability | Complexity |")
+        lines.append("|------|---------------|------------|")
+        for s in top_risky:
             try:
                 from pathlib import Path
-                kisa_yol = "/".join(Path(s.file_path).parts[-2:])
+                short_path = "/".join(Path(s.file_path).parts[-2:])
             except Exception:
-                kisa_yol = s.file_path[-40:]
-            satirlar.append(
-                f"| `{kisa_yol}` | %{s.ai_probability * 100:.0f} | {s.complexity_label} |"
+                short_path = s.file_path[-40:]
+            lines.append(
+                f"| `{short_path}` | {s.ai_probability * 100:.0f}% | {s.complexity_label} |"
             )
-        satirlar.append("")
+        lines.append("")
 
-    # Teknik borç (varsa)
-    if debt_ozeti:
-        toplam_saat = debt_ozeti.get("toplam_debt_saatleri", 0)
-        satirlar.append(f"### 💰 Teknik Borç Tahmini")
-        satirlar.append(f"")
-        satirlar.append(f"Tahmini borç: **{toplam_saat:.1f} saat**")
-        satirlar.append(f"")
-        satirlar.append(
-            "> ℹ️ *Bu bir tahmin modelidir — anlama skoru, AI olasılığı ve "
-            "karmaşıklık ağırlıklarına dayanır. Kesin muhasebe verisi değildir.*"
+    # Technical debt (if available)
+    if debt_summary:
+        total_hours = debt_summary.get("total_debt_hours", 0) or debt_summary.get("toplam_debt_saatleri", 0)
+        lines.append("### 💰 Technical Debt Estimate")
+        lines.append("")
+        lines.append(f"Estimated debt: **{total_hours:.1f} hours**")
+        lines.append("")
+        lines.append(
+            "> ℹ️ *This is an estimation model based on understanding score, AI probability, "
+            "and complexity weights. It is not precise accounting data.*"
         )
-        satirlar.append("")
+        lines.append("")
 
     # Footer
-    satirlar += [
+    lines += [
         "---",
         "<sub>🧬 [CodeDNA](https://github.com/codedna/codedna) · "
-        "Detaylı analiz için `codedna dashboard` çalıştırın.</sub>",
+        "Run `codedna dashboard` for detailed analysis.</sub>",
     ]
 
-    yorum = "\n".join(satirlar)
+    comment = "\n".join(lines)
 
-    # 2000 karakter limitini aş
-    if len(yorum) > 2000:
-        ozet = "\n".join(satirlar[:20])
-        yorum = (
-            ozet + "\n\n"
-            "*... (kısaltıldı — tam rapor için CodeDNA dashboard'a bakın)*\n\n"
-            f"---\n<sub>🧬 CodeDNA</sub>\n{_YORUM_MARKERI}"
+    # Truncate if over 2000 characters
+    if len(comment) > 2000:
+        summary = "\n".join(lines[:20])
+        comment = (
+            summary + "\n\n"
+            "*... (truncated — see CodeDNA dashboard for full report)*\n\n"
+            f"---\n<sub>🧬 CodeDNA</sub>\n{_COMMENT_MARKER}"
         )
 
-    return yorum
+    return comment
 
 
 # ---------------------------------------------------------------------------
-# GitHub API işlemleri
+# GitHub API operations
 # ---------------------------------------------------------------------------
 
-def _gh_istek(
+def _gh_request(
     method: str,
     url: str,
     token: str,
-    veri: Optional[dict] = None,
+    data: Optional[dict] = None,
 ) -> dict:
     """
-    GitHub API'ye kimlik doğrulamalı istek gönder.
+    Send an authenticated request to the GitHub API.
 
-    Güvenlik: token sadece Authorization header'ında kullanılır,
-    asla loglanmaz veya hata mesajına eklenmez.
+    Security: token is only used in the Authorization header,
+    never logged or added to error messages.
     """
-    govde = json.dumps(veri).encode("utf-8") if veri else None
-    istek = urllib.request.Request(
+    body = json.dumps(data).encode("utf-8") if data else None
+    request = urllib.request.Request(
         url,
-        data=govde,
+        data=body,
         method=method,
         headers={
             "Authorization": f"Bearer {token}",
@@ -151,12 +151,12 @@ def _gh_istek(
         },
     )
     try:
-        with urllib.request.urlopen(istek, timeout=15) as yanit:
-            return json.loads(yanit.read())
+        with urllib.request.urlopen(request, timeout=15) as response:
+            return json.loads(response.read())
     except urllib.error.HTTPError as e:
-        govde_str = e.read().decode("utf-8", errors="replace")
-        # Token'ı hata mesajına ASLA ekleme
-        raise RuntimeError(f"GitHub API hatası ({e.code}): {govde_str[:300]}")
+        body_str = e.read().decode("utf-8", errors="replace")
+        # NEVER include the token in error messages
+        raise RuntimeError(f"GitHub API error ({e.code}): {body_str[:300]}")
 
 
 def find_existing_comment(
@@ -165,29 +165,29 @@ def find_existing_comment(
     token: str,
 ) -> Optional[int]:
     """
-    Mevcut CodeDNA bot yorumunun ID'sini bul (marker ile).
+    Find the ID of an existing CodeDNA bot comment (by marker).
 
     Args:
-        repo: "owner/repo" formatında repo adı
-        pr_number: PR numarası
+        repo: Repo name in "owner/repo" format
+        pr_number: PR number
         token: GitHub token
 
     Returns:
-        Yorum ID'si veya yoksa None
+        Comment ID, or None if not found
     """
     url = f"{_GH_API}/repos/{repo}/issues/{pr_number}/comments?per_page=100"
     try:
-        yorumlar = _gh_istek("GET", url, token)
+        comments = _gh_request("GET", url, token)
     except Exception:
         return None
 
-    if not isinstance(yorumlar, list):
+    if not isinstance(comments, list):
         return None
 
-    for yorum in yorumlar:
-        body = yorum.get("body", "")
-        if _YORUM_MARKERI in body:
-            return yorum.get("id")
+    for comment in comments:
+        body = comment.get("body", "")
+        if _COMMENT_MARKER in body:
+            return comment.get("id")
 
     return None
 
@@ -199,44 +199,44 @@ def post_or_update_comment(
     token: str,
 ) -> dict:
     """
-    PR'a CodeDNA yorumu gönder veya mevcut yorumu güncelle.
+    Post a CodeDNA comment on a PR or update the existing one.
 
-    Spam önleme: Her push'ta yeni yorum açılmaz — mevcut CodeDNA
-    yorumu bulunur ve PATCH ile güncellenir. Yoksa yeni POST yapılır.
+    Anti-spam: a new comment is not created on every push — the existing
+    CodeDNA comment is found and updated via PATCH. If none exists, POST.
 
     Args:
-        repo: "owner/repo" formatında repo adı
-        pr_number: PR numarası
-        body: Yorum metni (Markdown)
+        repo: Repo name in "owner/repo" format
+        pr_number: PR number
+        body: Comment text (Markdown)
         token: GitHub token
 
     Returns:
-        GitHub API yanıtı
+        GitHub API response
     """
-    mevcut_id = find_existing_comment(repo, pr_number, token)
+    existing_id = find_existing_comment(repo, pr_number, token)
 
-    if mevcut_id:
-        # Mevcut yorumu güncelle — spam yaratma
-        url = f"{_GH_API}/repos/{repo}/issues/comments/{mevcut_id}"
-        return _gh_istek("PATCH", url, token, {"body": body})
+    if existing_id:
+        # Update existing comment — no spam
+        url = f"{_GH_API}/repos/{repo}/issues/comments/{existing_id}"
+        return _gh_request("PATCH", url, token, {"body": body})
     else:
-        # İlk defa yorum bırak
+        # Post first comment
         url = f"{_GH_API}/repos/{repo}/issues/{pr_number}/comments"
-        return _gh_istek("POST", url, token, {"body": body})
+        return _gh_request("POST", url, token, {"body": body})
 
 
 # ---------------------------------------------------------------------------
-# GitHub Actions ortamından PR bilgisi otomatik algıla
+# Auto-detect PR info from GitHub Actions environment
 # ---------------------------------------------------------------------------
 
 def github_actions_pr_bilgisi() -> Optional[tuple[str, int]]:
     """
-    GitHub Actions ortamından repo adı ve PR numarasını otomatik algıla.
+    Auto-detect the repo name and PR number from the GitHub Actions environment.
 
-    GITHUB_REPOSITORY ve GITHUB_EVENT_PATH ortam değişkenlerini kullanır.
+    Uses the GITHUB_REPOSITORY and GITHUB_EVENT_PATH environment variables.
 
     Returns:
-        (repo, pr_number) çifti veya algılanamıyorsa None
+        (repo, pr_number) tuple, or None if not detectable
     """
     repo = os.environ.get("GITHUB_REPOSITORY")
     event_path = os.environ.get("GITHUB_EVENT_PATH")
@@ -246,10 +246,10 @@ def github_actions_pr_bilgisi() -> Optional[tuple[str, int]]:
 
     try:
         with open(event_path, encoding="utf-8") as f:
-            event_veri = json.load(f)
+            event_data = json.load(f)
         pr_number = (
-            event_veri.get("pull_request", {}).get("number")
-            or event_veri.get("number")
+            event_data.get("pull_request", {}).get("number")
+            or event_data.get("number")
         )
         if pr_number:
             return repo, int(pr_number)

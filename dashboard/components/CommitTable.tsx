@@ -1,60 +1,60 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Commit, CommitDetay, getCommitDetay } from "@/lib/api";
+import { Commit, CommitDetail, getCommitDetail } from "@/lib/api";
 import { useTranslation } from "@/lib/i18n";
 
-/** Anlama skorunu renkli gösterir */
-function AnlamaSkoruHucresi({ skor }: { skor: number | null }) {
-  if (skor == null) return <span className="text-gray-600 text-sm">—</span>;
-  const renk =
-    skor >= 4 ? "text-green-400" : skor >= 2.5 ? "text-yellow-400" : "text-red-400";
-  const emoji = skor >= 4 ? "✅" : skor >= 2.5 ? "🔶" : "🔴";
+/** Displays understanding score in color */
+function UnderstandingScoreCell({ score }: { score: number | null }) {
+  if (score == null) return <span className="text-gray-600 text-sm">—</span>;
+  const color =
+    score >= 4 ? "text-green-400" : score >= 2.5 ? "text-yellow-400" : "text-red-400";
+  const emoji = score >= 4 ? "✅" : score >= 2.5 ? "🔶" : "🔴";
   return (
-    <span className={`font-medium text-sm ${renk}`}>
-      {emoji} {skor.toFixed(1)}/5
+    <span className={`font-medium text-sm ${color}`}>
+      {emoji} {score.toFixed(1)}/5
     </span>
   );
 }
 
-/** Tek commit için detay modalı */
-function CommitModal({ commit, onKapat }: { commit: Commit; onKapat: () => void }) {
+/** Detail modal for a single commit */
+function CommitModal({ commit, onClose }: { commit: Commit; onClose: () => void }) {
   const { t } = useTranslation();
-  const [detay, setDetay] = useState<CommitDetay | null>(null);
-  const [yukleniyor, setYukleniyor] = useState(true);
-  const [hata, setHata] = useState(false);
+  const [detail, setDetail] = useState<CommitDetail | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
 
   useEffect(() => {
-    getCommitDetay(commit.commit_hash)
-      .then(setDetay)
-      .catch(() => setHata(true))
-      .finally(() => setYukleniyor(false));
+    getCommitDetail(commit.commit_hash)
+      .then(setDetail)
+      .catch(() => setError(true))
+      .finally(() => setLoading(false));
   }, [commit.commit_hash]);
 
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4"
-      onClick={onKapat}
+      onClick={onClose}
     >
       <div
         className="bg-gray-900 border border-gray-700 rounded-2xl w-full max-w-2xl max-h-[80vh] overflow-y-auto"
         onClick={(e) => e.stopPropagation()}
       >
-        {/* Başlık */}
+        {/* Header */}
         <div className="flex items-center justify-between p-5 border-b border-gray-800">
           <div>
             <h2 className="text-white font-semibold">
               {t("modal_commit_detail")}{" "}
               <code className="text-cyan-400 text-sm bg-gray-800 px-2 py-0.5 rounded">
-                {commit.hash_kisa}
+                {commit.short_hash}
               </code>
             </h2>
             <p className="text-gray-500 text-sm mt-0.5">
-              {commit.yazar} · {commit.tarih}
+              {commit.author} · {commit.date}
             </p>
           </div>
           <button
-            onClick={onKapat}
+            onClick={onClose}
             className="text-gray-500 hover:text-white transition-colors p-1"
             aria-label={t("modal_close")}
           >
@@ -62,9 +62,9 @@ function CommitModal({ commit, onKapat }: { commit: Commit; onKapat: () => void 
           </button>
         </div>
 
-        {/* İçerik */}
+        {/* Content */}
         <div className="p-5">
-          {yukleniyor && (
+          {loading && (
             <div className="space-y-3">
               {Array.from({ length: 3 }).map((_, i) => (
                 <div key={i} className="h-8 bg-gray-800 rounded animate-pulse" />
@@ -72,11 +72,11 @@ function CommitModal({ commit, onKapat }: { commit: Commit; onKapat: () => void 
             </div>
           )}
 
-          {hata && (
+          {error && (
             <p className="text-red-400 text-sm">{t("modal_loading_error")}</p>
           )}
 
-          {detay && !yukleniyor && (
+          {detail && !loading && (
             <table className="w-full text-sm">
               <thead>
                 <tr className="text-gray-500 text-left border-b border-gray-800">
@@ -87,23 +87,23 @@ function CommitModal({ commit, onKapat }: { commit: Commit; onKapat: () => void 
                 </tr>
               </thead>
               <tbody>
-                {detay.dosyalar.map((d) => {
-                  const ai = (d.ai_olasıligi ?? 0) * 100;
-                  const aiRenk =
+                {detail.files.map((f) => {
+                  const ai = (f.ai_probability ?? 0) * 100;
+                  const aiColor =
                     ai >= 70 ? "text-red-400" : ai >= 40 ? "text-yellow-400" : "text-green-400";
                   return (
-                    <tr key={d.dosya_yolu} className="border-b border-gray-800/50 last:border-0">
+                    <tr key={f.file_path} className="border-b border-gray-800/50 last:border-0">
                       <td className="py-2.5 font-mono text-xs text-gray-300 max-w-[240px] truncate">
-                        {d.dosya_yolu.split("/").slice(-2).join("/")}
+                        {f.file_path.split("/").slice(-2).join("/")}
                       </td>
-                      <td className={`py-2.5 text-right font-medium ${aiRenk}`}>
-                        %{ai.toFixed(0)}
+                      <td className={`py-2.5 text-right font-medium ${aiColor}`}>
+                        {ai.toFixed(0)}%
                       </td>
                       <td className="py-2.5 text-right text-gray-400">
-                        {d.karmasiklik_skoru?.toFixed(0) ?? "—"}
+                        {f.complexity_score?.toFixed(0) ?? "—"}
                       </td>
                       <td className="py-2.5 text-right">
-                        <AnlamaSkoruHucresi skor={d.anlama_skoru} />
+                        <UnderstandingScoreCell score={f.understanding_score} />
                       </td>
                     </tr>
                   );
@@ -117,12 +117,12 @@ function CommitModal({ commit, onKapat }: { commit: Commit; onKapat: () => void 
   );
 }
 
-/** Commit listesi tablosu */
-export function CommitTable({ commitler }: { commitler: Commit[] }) {
+/** Commit list table */
+export function CommitTable({ commits }: { commits: Commit[] }) {
   const { t } = useTranslation();
-  const [secilenCommit, setSecilenCommit] = useState<Commit | null>(null);
+  const [selectedCommit, setSelectedCommit] = useState<Commit | null>(null);
 
-  if (commitler.length === 0) {
+  if (commits.length === 0) {
     return (
       <p className="text-gray-600 text-sm text-center py-8">
         {t("commits_no_data")}
@@ -144,22 +144,22 @@ export function CommitTable({ commitler }: { commitler: Commit[] }) {
             </tr>
           </thead>
           <tbody>
-            {commitler.map((c) => (
+            {commits.map((c) => (
               <tr
                 key={c.commit_hash}
-                onClick={() => setSecilenCommit(c)}
+                onClick={() => setSelectedCommit(c)}
                 className="border-b border-gray-800/50 last:border-0 hover:bg-gray-800/40 cursor-pointer transition-colors"
               >
                 <td className="py-3">
                   <code className="text-cyan-400 bg-gray-800 px-2 py-0.5 rounded text-xs">
-                    {c.hash_kisa}
+                    {c.short_hash}
                   </code>
                 </td>
-                <td className="py-3 text-gray-300">{c.yazar ?? "?"}</td>
-                <td className="py-3 text-gray-500">{c.tarih ?? "?"}</td>
-                <td className="py-3 text-right text-gray-400">{c.degisen_dosya_sayisi}</td>
+                <td className="py-3 text-gray-300">{c.author ?? "?"}</td>
+                <td className="py-3 text-gray-500">{c.date ?? "?"}</td>
+                <td className="py-3 text-right text-gray-400">{c.files_changed}</td>
                 <td className="py-3 text-right">
-                  <AnlamaSkoruHucresi skor={c.anlama_skoru} />
+                  <UnderstandingScoreCell score={c.understanding_score} />
                 </td>
               </tr>
             ))}
@@ -167,14 +167,14 @@ export function CommitTable({ commitler }: { commitler: Commit[] }) {
         </table>
       </div>
 
-      {secilenCommit && (
-        <CommitModal commit={secilenCommit} onKapat={() => setSecilenCommit(null)} />
+      {selectedCommit && (
+        <CommitModal commit={selectedCommit} onClose={() => setSelectedCommit(null)} />
       )}
     </>
   );
 }
 
-/** Yükleme iskeleti */
+/** Loading skeleton */
 export function CommitTableSkeleton() {
   return (
     <div className="space-y-3">

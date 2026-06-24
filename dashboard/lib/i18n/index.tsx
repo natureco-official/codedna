@@ -1,10 +1,10 @@
 "use client";
 
 /**
- * CodeDNA i18n — React Context ile global dil yönetimi.
- * - localStorage'da 'codedna-lang' anahtarı ile saklar
- * - Varsayılan: navigator.language 'tr' içeriyorsa TR, diğer her şey EN
- * - useTranslation() hook'u: { t, lang, setLang }
+ * CodeDNA i18n — global language management with React Context.
+ * - Stores in localStorage with key 'codedna-lang'
+ * - Default: EN, or TR if navigator.language contains 'tr'
+ * - useTranslation() hook: { t, lang, setLang }
  */
 
 import {
@@ -22,12 +22,13 @@ export type Lang = "en" | "tr";
 const STORAGE_KEY = "codedna-lang";
 const TRANSLATIONS = { en, tr } as const;
 
-/** Tarayıcı dilini okuyarak başlangıç dilini belirle */
-function tarayiciDili(): Lang {
+/** Read browser language to determine initial language — default EN */
+function browserLanguage(): Lang {
   if (typeof window === "undefined") return "en";
-  const kayitli = localStorage.getItem(STORAGE_KEY) as Lang | null;
-  if (kayitli === "en" || kayitli === "tr") return kayitli;
-  return navigator.language.toLowerCase().startsWith("tr") ? "tr" : "en";
+  const stored = localStorage.getItem(STORAGE_KEY) as Lang | null;
+  if (stored === "en" || stored === "tr") return stored;
+  // Default: English (user can switch to TR)
+  return "en";
 }
 
 // ---------------------------------------------------------------------------
@@ -53,14 +54,14 @@ const I18nContext = createContext<I18nContextValue>({
 export function I18nProvider({ children }: { children: React.ReactNode }) {
   const [lang, setLangState] = useState<Lang>("en");
 
-  // İstemci tarafında gerçek dili yükle
+  // Load the actual language on the client side
   useEffect(() => {
-    setLangState(tarayiciDili());
+    setLangState(browserLanguage());
   }, []);
 
-  const setLang = useCallback((yeniDil: Lang) => {
-    setLangState(yeniDil);
-    localStorage.setItem(STORAGE_KEY, yeniDil);
+  const setLang = useCallback((newLang: Lang) => {
+    setLangState(newLang);
+    localStorage.setItem(STORAGE_KEY, newLang);
   }, []);
 
   const t = useCallback(
@@ -81,7 +82,7 @@ export function I18nProvider({ children }: { children: React.ReactNode }) {
 // Hook
 // ---------------------------------------------------------------------------
 
-/** Çeviri hook'u — { t, lang, setLang } döndürür */
+/** Translation hook — returns { t, lang, setLang } */
 export function useTranslation() {
   return useContext(I18nContext);
 }

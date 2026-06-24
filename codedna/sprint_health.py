@@ -1,4 +1,4 @@
-"""Sprint bazlı kod sağlığı skoru hesaplama."""
+"""Sprint-based code health score calculation."""
 
 from __future__ import annotations
 
@@ -9,47 +9,45 @@ from typing import Optional
 
 from codedna.db import get_connection, get_sprint_history, save_sprint
 
-# Sağlık skoru eşikleri (0-100)
-_SAGLIKLI_ESIK = 80
-_DIKKAT_ESIK = 50
+# Health score thresholds (0-100)
+_HEALTHY_THRESHOLD = 80
+_WARNING_THRESHOLD = 50
 
-# Yüksek riskli AI eşiği
-_YUKSEK_RISK_AI = 0.7
+# High-risk AI threshold
+_HIGH_RISK_AI = 0.7
 
 
 @dataclass
-class SprintSonucu:
-    """Tek sprint'in sağlık analizi."""
+class SprintResult:
+    """Health analysis for a single sprint."""
 
-    sprint_adi: str
-    baslangic: datetime
-    bitis: datetime
+    sprint_name: str
+    start_date: datetime
+    end_date: datetime
     health_score: float            # 0-100
-    durum: str                     # SAĞLIKLI / DİKKAT / RİSKLİ
+    status: str                    # HEALTHY / WARNING / RISKY
     avg_understanding: Optional[float]
-    ai_orani: float                # yüksek riskli AI dosyalarının oranı
-    debt_delta_saati: float        # borç değişimi (+ = arttı, - = azaldı)
-    toplam_commit: int
-    ai_satir: int
-    insan_satir: int
+    ai_ratio: float                # ratio of high-risk AI files
+    debt_delta_hours: float        # debt change (+ = increased, - = decreased)
+    total_commits: int
+    ai_lines: int
+    human_lines: int
 
     @property
-    def ai_insan_orani_str(self) -> str:
-        """AI/insan oranını yüzde string olarak döndür."""
-        toplam = self.ai_satir + self.insan_satir
-        if toplam == 0:
+    def ai_human_ratio_str(self) -> str:
+        """Return AI/human ratio as a percentage string."""
+        total = self.ai_lines + self.human_lines
+        if total == 0:
             return "N/A"
-        ai_pct = self.ai_satir / toplam * 100
-        return f"%{ai_pct:.0f} AI / %{100-ai_pct:.0f} İnsan"
+        ai_pct = self.ai_lines / total * 100
+        return f"{ai_pct:.0f}% AI / {100-ai_pct:.0f}% Human"
 
 
-def _durum_belirle(skor: float) -> str:
-    """Skor aralığına göre durum etiketi döndür."""
-    if skor >= _SAGLIKLI_ESIK:
-        return "SAĞLIKLI"
-    elif skor >= _DIKKAT_ESIK:
-        return "DİKKAT"
-    return "RİSKLİ"
+def _determine_status(score: float) -> str:
+    """Return status label based on score range."""
+    if score >= _HEALTHY_THRESHOLD:
+        return "HEALTHY"
+    return "WARNING" if score >= 50 else "RISKY"
 
 
 def calculate_sprint_health(
@@ -57,33 +55,33 @@ def calculate_sprint_health(
     db_path: Path,
     start_date: datetime,
     end_date: datetime,
-    sprint_adi: str = "Sprint",
-) -> SprintSonucu:
+    sprint_name: str = "Sprint",
+) -> SprintResult:
     """
-    Verilen tarih aralığındaki commitleri analiz edip sprint sağlık skoru üret.
+    Analyze commits in the given date range and produce a sprint health score.
 
-    Health score formülü (0-100):
-      - anlama_puani = (avg_understanding / 5) * 40       max 40 puan
-      - ai_dengesi   = (1 - yüksek_riskli_ai_orani) * 30  max 30 puan
-      - borc_trendi  = max(0, 1 - delta_oran) * 30         max 30 puan
+    Health score formula (0-100):
+      - understanding_score = (avg_understanding / 5) * 40   max 40 points
+      - ai_balance          = (1 - high_risk_ai_ratio) * 30  max 30 points
+      - debt_trend          = max(0, 1 - delta_ratio) * 30   max 30 points
 
     Args:
-        repo_path: Git repo kök dizini
-        db_path: SQLite veritabanı yolu
-        start_date: Sprint başlangıç tarihi
-        end_date: Sprint bitiş tarihi
-        sprint_adi: Sprint ismi
+        repo_path: Git repo root directory
+        db_path: SQLite database path
+        start_date: Sprint start date
+        end_date: Sprint end date
+        sprint_name: Sprint name
 
     Returns:
-        SprintSonucu nesnesi
+        SprintResult object
     """
     start_ts = int(start_date.timestamp())
     end_ts = int(end_date.timestamp())
 
-    # Sprint tarih aralığındaki commit'leri ve dosya skorlarını çek
+    # Fetch commits and file scores in the sprint date range
     try:
         with get_connection(db_path) as conn:
-            commitler = conn.execute(
+            commits = conn.execute(
                 """
                 SELECT c.commit_hash, c.understanding_score, c.timestamp
                 FROM commits c
@@ -93,18 +91,18 @@ def calculate_sprint_health(
                 (start_ts, end_ts),
             ).fetchall()
     except Exception:
-        commitler = []
+        commits = []
 
-    toplam_commit = len(commitler)
+    total_commits = len(commits)
 
-    # Dosya skorlarını topla
-    ai_skorlari: list[float] = []
-    anlama_skorlari: list[float] = []
+    # Collect file scores
+    ai_scores: list[float] = []
+    understanding_scores: list[float] = []
 
     try:
         with get_connection(db_path) as conn:
-            for commit in commitler:
-                dosyalar = conn.execute(
+            for commit in commits:
+                files = conn.execute(
                     """
                     SELECT ai_probability, understanding_score
                     FROM file_scores
@@ -112,76 +110,76 @@ def calculate_sprint_health(
                     """,
                     (commit["commit_hash"],),
                 ).fetchall()
-                for d in dosyalar:
-                    if d["ai_probability"] is not None:
-                        ai_skorlari.append(float(d["ai_probability"]))
-                    if d["understanding_score"] is not None:
-                        anlama_skorlari.append(float(d["understanding_score"]))
+                for f in files:
+                    if f["ai_probability"] is not None:
+                        ai_scores.append(float(f["ai_probability"]))
+                    if f["understanding_score"] is not None:
+                        understanding_scores.append(float(f["understanding_score"]))
     except Exception:
         pass
 
-    # Ortalama anlama skoru
-    avg_anlama = (
-        sum(anlama_skorlari) / len(anlama_skorlari)
-        if anlama_skorlari else None
+    # Average understanding score
+    avg_understanding = (
+        sum(understanding_scores) / len(understanding_scores)
+        if understanding_scores else None
     )
 
-    # Yüksek riskli AI oranı (>= 0.7)
-    yuksek_riskli = sum(1 for a in ai_skorlari if a >= _YUKSEK_RISK_AI)
-    ai_orani = yuksek_riskli / len(ai_skorlari) if ai_skorlari else 0.0
+    # High-risk AI ratio (>= 0.7)
+    high_risk_count = sum(1 for a in ai_scores if a >= _HIGH_RISK_AI)
+    ai_ratio = high_risk_count / len(ai_scores) if ai_scores else 0.0
 
-    # AI / insan satır tahmini (AI skoru > 0.5 → AI satır sayılır)
-    ai_satir = sum(1 for a in ai_skorlari if a > 0.5) * 50  # yaklaşık
-    insan_satir = max(len(ai_skorlari) * 50 - ai_satir, 0)
+    # AI / human line estimate (AI score > 0.5 → counted as AI line)
+    ai_lines = sum(1 for a in ai_scores if a > 0.5) * 50  # approximate
+    human_lines = max(len(ai_scores) * 50 - ai_lines, 0)
 
-    # Teknik borç delta'sı — tüm repo borcu hesapla (sprint başı/sonu farkı yok,
-    # mevcut durumu baz al, negatif = borç azaldı yorumu)
+    # Technical debt delta — calculate full repo debt (no sprint start/end diff,
+    # use current state as baseline, negative = debt decreased)
     from codedna.tech_debt import calculate_repo_debt
     try:
-        ozet = calculate_repo_debt(repo_path, db_path)
-        debt_delta = ozet.toplam_debt_saatleri / max(toplam_commit, 1)
+        summary = calculate_repo_debt(repo_path, db_path)
+        debt_delta = summary.total_debt_hours / max(total_commits, 1)
     except Exception:
         debt_delta = 0.0
 
-    # ---- Health score hesapla ----
-    # 1. Anlama puanı (max 40)
-    anlama_puani = ((avg_anlama / 5.0) * 40.0) if avg_anlama is not None else 20.0
+    # ---- Calculate health score ----
+    # 1. Understanding score (max 40)
+    understanding_points = ((avg_understanding / 5.0) * 40.0) if avg_understanding is not None else 20.0
 
-    # 2. AI denge puanı (max 30)
-    ai_dengesi = (1.0 - ai_orani) * 30.0
+    # 2. AI balance score (max 30)
+    ai_balance = (1.0 - ai_ratio) * 30.0
 
-    # 3. Borç trendi puanı (max 30) — debt_delta küçükse iyi
-    delta_oran = min(debt_delta / 10.0, 1.0)   # 10 saate normalize
-    borc_trendi = max(0.0, 1.0 - delta_oran) * 30.0
+    # 3. Debt trend score (max 30) — lower debt_delta is better
+    delta_ratio = min(debt_delta / 10.0, 1.0)   # normalize to 10 hours
+    debt_trend = max(0.0, 1.0 - delta_ratio) * 30.0
 
-    health_score = round(anlama_puani + ai_dengesi + borc_trendi, 1)
-    durum = _durum_belirle(health_score)
+    health_score = round(understanding_points + ai_balance + debt_trend, 1)
+    status = _determine_status(health_score)
 
-    return SprintSonucu(
-        sprint_adi=sprint_adi,
-        baslangic=start_date,
-        bitis=end_date,
+    return SprintResult(
+        sprint_name=sprint_name,
+        start_date=start_date,
+        end_date=end_date,
         health_score=health_score,
-        durum=durum,
-        avg_understanding=round(avg_anlama, 2) if avg_anlama is not None else None,
-        ai_orani=round(ai_orani, 3),
-        debt_delta_saati=round(debt_delta, 2),
-        toplam_commit=toplam_commit,
-        ai_satir=ai_satir,
-        insan_satir=insan_satir,
+        status=status,
+        avg_understanding=round(avg_understanding, 2) if avg_understanding is not None else None,
+        ai_ratio=round(ai_ratio, 3),
+        debt_delta_hours=round(debt_delta, 2),
+        total_commits=total_commits,
+        ai_lines=ai_lines,
+        human_lines=human_lines,
     )
 
 
-def save_sprint_result(sonuc: SprintSonucu, db_path: Path) -> int:
-    """Sprint sonucunu DB'ye kaydet, yeni id döndür."""
+def save_sprint_result(result: SprintResult, db_path: Path) -> int:
+    """Save sprint result to DB and return new id."""
     return save_sprint(
-        sprint_name=sonuc.sprint_adi,
-        start_date=int(sonuc.baslangic.timestamp()),
-        end_date=int(sonuc.bitis.timestamp()),
-        total_lines_ai=sonuc.ai_satir,
-        total_lines_human=sonuc.insan_satir,
-        avg_understanding=sonuc.avg_understanding,
-        debt_delta_hours=sonuc.debt_delta_saati,
-        health_score=sonuc.health_score,
+        sprint_name=result.sprint_name,
+        start_date=int(result.start_date.timestamp()),
+        end_date=int(result.end_date.timestamp()),
+        total_lines_ai=result.ai_lines,
+        total_lines_human=result.human_lines,
+        avg_understanding=result.avg_understanding,
+        debt_delta_hours=result.debt_delta_hours,
+        health_score=result.health_score,
         db_path=db_path,
     )

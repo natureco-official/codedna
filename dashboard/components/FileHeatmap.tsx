@@ -1,34 +1,34 @@
 "use client";
 
-import { DosyaSkoru } from "@/lib/api";
+import { FileScore } from "@/lib/api";
 import { useTranslation } from "@/lib/i18n";
 
-function kisaYol(yol: string): string {
-  const parcalar = yol.split("/");
-  return parcalar.length > 2 ? parcalar.slice(-2).join("/") : yol;
+function shortPath(path: string): string {
+  const parts = path.split("/");
+  return parts.length > 2 ? parts.slice(-2).join("/") : path;
 }
 
-function AIProgressBar({ yuzde }: { yuzde: number }) {
-  const renk = yuzde >= 70 ? "bg-red-500" : yuzde >= 40 ? "bg-yellow-500" : "bg-green-500";
-  const emoji = yuzde >= 70 ? "🔴" : yuzde >= 40 ? "🟡" : "🟢";
+function AIProgressBar({ percentage }: { percentage: number }) {
+  const color = percentage >= 70 ? "bg-red-500" : percentage >= 40 ? "bg-yellow-500" : "bg-green-500";
+  const emoji = percentage >= 70 ? "🔴" : percentage >= 40 ? "🟡" : "🟢";
   return (
     <div className="flex items-center gap-2 min-w-[120px]">
       <span className="text-sm">{emoji}</span>
       <div className="flex-1 bg-gray-800 rounded-full h-2">
         <div
-          className={`${renk} h-2 rounded-full transition-all`}
-          style={{ width: `${Math.min(yuzde, 100)}%` }}
+          className={`${color} h-2 rounded-full transition-all`}
+          style={{ width: `${Math.min(percentage, 100)}%` }}
         />
       </div>
-      <span className="text-xs text-gray-400 w-10 text-right">%{yuzde.toFixed(0)}</span>
+      <span className="text-xs text-gray-400 w-10 text-right">{percentage.toFixed(0)}%</span>
     </div>
   );
 }
 
-function KarmasiklikBadge({ etiket }: { etiket: string }) {
+function ComplexityBadge({ label }: { label: string }) {
   const { t } = useTranslation();
 
-  // API'den gelen değeri normalleştir (TR veya EN) → t() ile çevir
+  // Normalize API value (TR or EN) → translate with t()
   const normalize = (e: string): string => {
     const map: Record<string, string> = {
       Yüksek: "complexity_high", High: "complexity_high",
@@ -38,27 +38,27 @@ function KarmasiklikBadge({ etiket }: { etiket: string }) {
     return map[e] ?? e;
   };
 
-  const renkMap: Record<string, string> = {
+  const colorMap: Record<string, string> = {
     complexity_high: "bg-red-500/20 text-red-400",
     complexity_medium: "bg-yellow-500/20 text-yellow-400",
     complexity_low: "bg-green-500/20 text-green-400",
   };
 
-  const key = normalize(etiket);
-  const renk = renkMap[key] ?? "bg-gray-500/20 text-gray-400";
-  const label = t(key as Parameters<typeof t>[0]) ?? etiket;
+  const key = normalize(label);
+  const color = colorMap[key] ?? "bg-gray-500/20 text-gray-400";
+  const displayLabel = t(key as Parameters<typeof t>[0]) ?? label;
 
   return (
-    <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${renk}`}>
-      {label}
+    <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${color}`}>
+      {displayLabel}
     </span>
   );
 }
 
-export function FileHeatmap({ dosyalar }: { dosyalar: DosyaSkoru[] }) {
+export function FileHeatmap({ files }: { files: FileScore[] }) {
   const { t } = useTranslation();
 
-  if (dosyalar.length === 0) {
+  if (files.length === 0) {
     return (
       <p className="text-gray-600 text-sm text-center py-8">{t("files_no_data")}</p>
     );
@@ -77,22 +77,22 @@ export function FileHeatmap({ dosyalar }: { dosyalar: DosyaSkoru[] }) {
           </tr>
         </thead>
         <tbody>
-          {dosyalar.map((d) => (
+          {files.map((f) => (
             <tr
-              key={d.dosya_yolu}
+              key={f.file_path}
               className="border-b border-gray-800/50 last:border-0 hover:bg-gray-800/30 transition-colors"
             >
               <td className="py-3 font-mono text-xs text-gray-300 max-w-[240px]">
-                <span title={d.dosya_yolu}>{kisaYol(d.dosya_yolu)}</span>
+                <span title={f.file_path}>{shortPath(f.file_path)}</span>
               </td>
               <td className="py-3 min-w-[160px]">
-                <AIProgressBar yuzde={d.ai_yuzdesi} />
+                <AIProgressBar percentage={f.ai_percentage} />
               </td>
               <td className="py-3">
-                <KarmasiklikBadge etiket={d.karmasiklik_etiketi} />
+                <ComplexityBadge label={f.complexity_label} />
               </td>
-              <td className="py-3 text-right text-gray-400">{d.toplam_satir}</td>
-              <td className="py-3 text-right text-gray-400">{d.fonksiyon_sayisi}</td>
+              <td className="py-3 text-right text-gray-400">{f.total_lines}</td>
+              <td className="py-3 text-right text-gray-400">{f.function_count}</td>
             </tr>
           ))}
         </tbody>

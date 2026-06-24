@@ -18,7 +18,7 @@ export default function RootLayout({
     <html lang="en" className="dark">
       <body className="antialiased bg-gray-950 min-h-screen font-sans">
         <ClientProviders>
-          {/* Üst navigasyon */}
+          {/* Top navigation */}
           <nav className="border-b border-gray-800 bg-gray-950/80 backdrop-blur-sm sticky top-0 z-40">
             <div className="max-w-7xl mx-auto px-6 h-14 flex items-center justify-between">
               {/* Logo */}
@@ -29,15 +29,15 @@ export default function RootLayout({
                 </span>
               </Link>
 
-              {/* Navigasyon + dil değiştirici (client component) */}
+              {/* Navigation + language switcher (client component) */}
               <NavClient />
             </div>
           </nav>
 
-          {/* Ana içerik */}
+          {/* Main content */}
           <main className="max-w-7xl mx-auto px-6 py-8">{children}</main>
 
-          {/* Alt bilgi */}
+          {/* Footer */}
           <footer className="border-t border-gray-800 mt-16">
             <div className="max-w-7xl mx-auto px-6 py-4 text-xs text-gray-700 flex items-center justify-between">
               <span>🧬 CodeDNA</span>

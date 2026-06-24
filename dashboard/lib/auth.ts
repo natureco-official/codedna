@@ -1,34 +1,34 @@
 /**
- * CodeDNA Auth istemci yardımcıları.
+ * CodeDNA Auth client helpers.
  *
- * Güvenlik notu:
- *   JWT token'ı localStorage'da saklamak XSS saldırılarına açıktır.
- *   Bu implementasyon httpOnly cookie kullanır:
- *   - Token'ı client-side JS'den erişilemez yerde saklar
- *   - Cookie set/delete işlemleri Next.js API route'ları üzerinden yapılır
- *   - Client tarafı yalnızca "giriş yapılmış mı" durumunu bilir
+ * Security note:
+ *   Storing JWT tokens in localStorage is vulnerable to XSS attacks.
+ *   This implementation uses httpOnly cookies:
+ *   - Stores the token where client-side JS cannot access it
+ *   - Cookie set/delete operations go through Next.js API routes
+ *   - The client side only knows whether the user is logged in
  */
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
-export interface KullaniciVeri {
+export interface UserData {
   user_id: number;
   email: string;
   plan: string;
   subscription_status: string;
 }
 
-export interface AbonelikVeri {
+export interface SubscriptionData {
   plan: string;
   subscription_status: string;
   lemonsqueezy_customer_id: string | null;
 }
 
-/** Giriş yap — Next.js API route üzerinden (httpOnly cookie set eder) */
-export async function girisYap(
+/** Log in — via Next.js API route (sets httpOnly cookie) */
+export async function login(
   email: string,
   password: string
-): Promise<{ basarili: boolean; hata?: string; kullanici?: KullaniciVeri }> {
+): Promise<{ success: boolean; error?: string; user?: UserData }> {
   try {
     const res = await fetch("/api/auth/login", {
       method: "POST",
@@ -37,23 +37,23 @@ export async function girisYap(
       credentials: "include",
     });
 
-    const veri = await res.json();
+    const data = await res.json();
 
     if (!res.ok) {
-      return { basarili: false, hata: veri.detail || "Giriş başarısız." };
+      return { success: false, error: data.detail || "Login failed." };
     }
 
-    return { basarili: true, kullanici: veri };
+    return { success: true, user: data };
   } catch {
-    return { basarili: false, hata: "API'ye bağlanılamadı." };
+    return { success: false, error: "Could not connect to API." };
   }
 }
 
-/** Kayıt ol — Next.js API route üzerinden */
-export async function kayitOl(
+/** Register — via Next.js API route */
+export async function register(
   email: string,
   password: string
-): Promise<{ basarili: boolean; hata?: string; kullanici?: KullaniciVeri }> {
+): Promise<{ success: boolean; error?: string; user?: UserData }> {
   try {
     const res = await fetch("/api/auth/register", {
       method: "POST",
@@ -62,28 +62,28 @@ export async function kayitOl(
       credentials: "include",
     });
 
-    const veri = await res.json();
+    const data = await res.json();
 
     if (!res.ok) {
-      return { basarili: false, hata: veri.detail || "Kayıt başarısız." };
+      return { success: false, error: data.detail || "Registration failed." };
     }
 
-    return { basarili: true, kullanici: veri };
+    return { success: true, user: data };
   } catch {
-    return { basarili: false, hata: "API'ye bağlanılamadı." };
+    return { success: false, error: "Could not connect to API." };
   }
 }
 
-/** Çıkış yap — cookie'yi temizle */
-export async function cikisYap(): Promise<void> {
+/** Log out — clear cookie */
+export async function logout(): Promise<void> {
   await fetch("/api/auth/logout", {
     method: "POST",
     credentials: "include",
   });
 }
 
-/** Mevcut kullanıcı bilgisini getir (cookie ile) */
-export async function benimKimligim(): Promise<KullaniciVeri | null> {
+/** Fetch current user info (via cookie) */
+export async function getCurrentUser(): Promise<UserData | null> {
   try {
     const res = await fetch("/api/auth/me", {
       credentials: "include",
@@ -95,8 +95,8 @@ export async function benimKimligim(): Promise<KullaniciVeri | null> {
   }
 }
 
-/** Doğrudan FastAPI'ye checkout URL isteği at */
-export async function checkoutUrlAl(
+/** Request checkout URL directly from FastAPI */
+export async function getCheckoutUrl(
   plan: string,
   token: string
 ): Promise<string | null> {
@@ -110,15 +110,15 @@ export async function checkoutUrlAl(
       body: JSON.stringify({ plan }),
     });
     if (!res.ok) return null;
-    const veri = await res.json();
-    return veri.checkout_url ?? null;
+    const data = await res.json();
+    return data.checkout_url ?? null;
   } catch {
     return null;
   }
 }
 
-/** Abonelik durumunu getir */
-export async function abonelikDurumu(token: string): Promise<AbonelikVeri | null> {
+/** Fetch subscription status */
+export async function getSubscriptionStatus(token: string): Promise<SubscriptionData | null> {
   try {
     const res = await fetch(`${API_URL}/billing/subscription`, {
       headers: { Authorization: `Bearer ${token}` },

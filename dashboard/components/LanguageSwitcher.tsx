@@ -2,31 +2,31 @@
 
 import { useTranslation, Lang } from "@/lib/i18n";
 
-/** Navbar sağ köşesine giden dil değiştirici */
+/** Language switcher for the navbar right corner */
 export function LanguageSwitcher() {
   const { lang, setLang } = useTranslation();
 
-  const diller: { kod: Lang; bayrak: string; etiket: string }[] = [
-    { kod: "en", bayrak: "🇬🇧", etiket: "EN" },
-    { kod: "tr", bayrak: "🇹🇷", etiket: "TR" },
+  const languages: { code: Lang; flag: string; label: string }[] = [
+    { code: "en", flag: "🇬🇧", label: "EN" },
+    { code: "tr", flag: "🇹🇷", label: "TR" },
   ];
 
   return (
     <div className="flex items-center gap-1 text-sm">
-      {diller.map((d, i) => (
-        <span key={d.kod} className="flex items-center gap-1">
+      {languages.map((d, i) => (
+        <span key={d.code} className="flex items-center gap-1">
           {i > 0 && <span className="text-gray-700">|</span>}
           <button
-            onClick={() => setLang(d.kod)}
+            onClick={() => setLang(d.code)}
             className={`flex items-center gap-1 px-1.5 py-0.5 rounded transition-colors ${
-              lang === d.kod
+              lang === d.code
                 ? "text-cyan-400 font-bold"
                 : "text-gray-500 hover:text-gray-300"
             }`}
-            aria-label={`Switch to ${d.etiket}`}
+            aria-label={`Switch to ${d.label}`}
           >
-            <span>{d.bayrak}</span>
-            <span>{d.etiket}</span>
+            <span>{d.flag}</span>
+            <span>{d.label}</span>
           </button>
         </span>
       ))}

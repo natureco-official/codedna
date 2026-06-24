@@ -2,8 +2,8 @@
 
 import { useTranslation } from "@/lib/i18n";
 
-/** API bağlantı hatası durumunda gösterilen banner */
-export function HataBanner({ mesaj }: { mesaj?: string }) {
+/** Banner shown when API connection fails */
+export function ErrorBanner({ message }: { message?: string }) {
   const { t } = useTranslation();
 
   return (
@@ -14,9 +14,10 @@ export function HataBanner({ mesaj }: { mesaj?: string }) {
           {t("error_api").split("—")[0].trim()}
         </p>
         <p className="text-red-300/70 text-xs mt-0.5">
-          {mesaj ?? t("error_api")}
+          {message ?? t("error_api")}
         </p>
       </div>
     </div>
   );
 }
+

@@ -2056,6 +2056,97 @@ def update(
 
 
 # ---------------------------------------------------------------------------
+# codedna demo (seed database with realistic fake data)
+# ---------------------------------------------------------------------------
+@app.command()
+def demo(
+    reset: bool = typer.Option(False, "--reset", help="Clear all demo data"),
+    data_only: bool = typer.Option(False, "--data-only", help="Seed data only, don't start dashboard"),
+) -> None:
+    """Load demo data into the database (idempotent) and open the dashboard."""
+    from codedna.demo import seed_demo_data, clear_demo_data, is_demo_active
+    from codedna.db import get_db_path
+
+    db_path = get_db_path()
+
+    console.print()
+    if reset:
+        deleted = clear_demo_data(db_path)
+        console.print(
+            Panel(
+                f"[bold green]✓ Demo data cleared.[/bold green]\n\n"
+                f"[dim]Removed:[/dim] [yellow]{deleted}[/yellow] [dim]rows[/dim]",
+                title="[bold cyan]🧬 CodeDNA — Demo Reset[/bold cyan]",
+                border_style="cyan",
+                padding=(1, 2),
+            )
+        )
+        console.print()
+        return
+
+    # Seed
+    if is_demo_active(db_path):
+        console.print(
+            Panel(
+                "[bold yellow]⚠ Demo data already seeded.[/bold yellow]\n\n"
+                "[dim]Run [bold]codedna demo --reset[/bold] to clear and re-seed.[/dim]",
+                title="[bold yellow]🧬 CodeDNA — Demo Mode[/bold yellow]",
+                border_style="yellow",
+                padding=(1, 2),
+            )
+        )
+        console.print()
+        return
+
+    console.print("[bold cyan]🧬 CodeDNA Demo Mode[/bold cyan]")
+    console.print("─" * 40)
+    console.print()
+
+    with console.status("[dim]Seeding demo data...[/dim]"):
+        counts = seed_demo_data(db_path)
+
+    console.print(f"  [green]✓[/green] [bold]{counts['commits']}[/bold] commits loaded")
+    console.print(f"  [green]✓[/green] [bold]{counts['files']}[/bold] files analyzed")
+    console.print(f"  [green]✓[/green] [bold]{counts['authors']}[/bold] developer profiles created")
+    console.print(f"  [green]✓[/green] [bold]{counts['sprints']}[/bold] sprints recorded")
+    console.print()
+
+    # Summary panel
+    body = (
+        f"[bold green]✓ Demo data ready![/bold green]\n\n"
+        f"[dim]Dashboard:[/dim] [cyan]http://localhost:3000[/cyan]\n"
+        f"[dim]API:[/dim]       [cyan]http://localhost:8000[/cyan]\n\n"
+        f"[yellow]⚠ Demo data is fake — for previewing the dashboard only.[/yellow]\n"
+        f"[dim]Run [bold]codedna demo --reset[/bold] to clear demo data.[/dim]"
+    )
+    console.print(Panel(body, border_style="green", padding=(1, 2)))
+    console.print()
+
+    if data_only:
+        console.print("[dim]--data-only flag set, dashboard not started.[/dim]")
+        console.print()
+        return
+
+    # Try to start dashboard (subprocess so we don't block this command)
+    import subprocess
+    import sys
+    console.print("[dim]Starting dashboard in background...[/dim]")
+    try:
+        subprocess.Popen(
+            [sys.executable, "-m", "codedna", "dashboard"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        console.print(f"  [green]✓[/green] Dashboard starting at [cyan]http://localhost:3000[/cyan]")
+        console.print(f"  [dim]API at [cyan]http://localhost:8000[/cyan][/dim]")
+    except Exception as e:
+        console.print(f"  [yellow]⚠ Could not auto-start dashboard: {e}[/yellow]")
+        console.print(f"  [dim]Run [bold]codedna dashboard[/bold] manually to start it.[/dim]")
+    console.print()
+
+
+# ---------------------------------------------------------------------------
 # codedna setup (interactive AI analysis configuration wizard)
 # ---------------------------------------------------------------------------
 @app.command()

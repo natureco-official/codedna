@@ -97,6 +97,40 @@ async def health_check() -> dict:
     }
 
 
+# ---------------------------------------------------------------------------
+# Demo mode endpoints
+# ---------------------------------------------------------------------------
+@app.get("/demo/status", tags=["Demo"])
+async def demo_status() -> dict:
+    """Check whether demo data is currently active in the database."""
+    from codedna.demo import is_demo_active, _count_demo
+    db = _db_path()
+    init_db(db)
+    active = is_demo_active(db)
+    return {
+        "active": active,
+        "counts": _count_demo(db) if active else {"commits": 0, "files": 0, "authors": 0, "sprints": 0},
+    }
+
+
+@app.post("/demo/seed", tags=["Demo"])
+async def demo_seed() -> dict:
+    """Seed the database with realistic fake demo data (idempotent)."""
+    from codedna.demo import seed_demo_data
+    db = _db_path()
+    init_db(db)
+    return seed_demo_data(db)
+
+
+@app.delete("/demo/reset", tags=["Demo"])
+async def demo_reset() -> dict:
+    """Clear all demo data from the database."""
+    from codedna.demo import clear_demo_data
+    db = _db_path()
+    deleted = clear_demo_data(db)
+    return {"deleted": deleted, "active": False}
+
+
 @app.get("/repo/summary", tags=["Repo"])
 async def repo_summary() -> dict:
     """Repo-wide summary: average AI score, total commits, risk level."""

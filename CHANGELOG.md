@@ -1,5 +1,36 @@
 # Changelog
 
+## [0.5.0] - 2026-06-24 — "Phase 8: Demo Mode + VS Code Marketplace"
+
+### ✨ Added — Demo Mode (Part A)
+- **`codedna/demo.py`** — new module with `seed_demo_data`, `clear_demo_data`, `is_demo_active`
+  - 47 fake commits over 30 days, varying AI probability (0.1–0.9)
+  - 4 authors, 8 files, 3 sprints with realistic health scores
+  - 20% null understanding scores, 80% in [3.0, 5.0]
+  - Idempotent: tags demo rows with `__demo__` prefix
+- **`codedna demo` CLI command** — seed + auto-start dashboard
+  - `codedna demo` — seed and start dashboard
+  - `codedna demo --reset` — clear all demo rows
+  - `codedna demo --data-only` — seed without starting dashboard
+- **FastAPI endpoints** — `/demo/status`, `/demo/seed`, `/demo/reset`
+- **Dashboard banner** — orange banner at top of dashboard when demo is active
+  - Dismissable, persisted in localStorage
+  - i18n keys: `demo_banner`, `demo_close`, `demo_init_cta`
+
+### ✨ Added — VS Code Marketplace (Part B)
+- **`vscode-extension/package.json`** — full marketplace metadata
+  - `icon` (128x128 PNG), `galleryBanner`, `badges`, `keywords`, `categories`
+  - `homepage`, `bugs`, `repository`, `license: MIT`
+  - `scripts` for `compile`/`watch`/`package`/`publish`
+  - `devDependencies`: `@vscode/vsce ^2.24.0`
+- **`vscode-extension/images/icon.png`** — 128x128 dark cyan/emerald DNA helix
+- **`vscode-extension/.vscodeignore`** — excludes `src/`, `node_modules/`, `*.ts`
+- **`vscode-extension/MARKETPLACE_README.md`** — full English marketplace description
+- **`vscode-extension/PUBLISH.md`** — step-by-step publishing instructions
+
+### 🔄 Changed
+- Minor version bump (0.4.2 → 0.5.0) — major feature release, breaks the 7-patch cascade
+
 ## [0.4.2] - 2026-06-24 — "Doctor Legacy Style"
 
 ### 🎨 Redesigned

@@ -1,5 +1,7 @@
 name: "CodeQL"
 on:
+  push:
+    branches: [ main ]
   pull_request:
     branches: [ main ]
   schedule:
@@ -13,11 +15,14 @@ jobs:
       contents: read
       security-events: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: github/codeql-action/init@v3
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+      - name: Install Python dependencies
+        run: uv sync
+      - uses: github/codeql-action/init@v4
         with:
           languages: python
           queries: security-and-quality
-      - uses: github/codeql-action/analyze@v3
+      - uses: github/codeql-action/analyze@v4
         with:
           category: "/language:python"

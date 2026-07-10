@@ -498,3 +498,7 @@ MIT License - Copyright (c) 2026 NatureCo
 [⭐ Star us on GitHub](https://github.com/natureco-official/codedna) • [📦 Install from PyPI](https://pypi.org/project/codedna/) • [🐦 Follow on Twitter](https://twitter.com/naturecoofficial)
 
 </div>
+
+---
+
+<sub>Part of the **NatureCo** ecosystem — [natureco.me](https://natureco.me) · NatureCo ekosisteminin parçası</sub>

@@ -2134,7 +2134,14 @@ def ask(
     dry_run: bool = typer.Option(False, "--dry-run", help="Show the command without running it."),
 ) -> None:
     """Run a CodeDNA command from a natural-language request (powered by Needle)."""
-    from codedna.nl import route_command
+    try:
+        from codedna.nl import route_command
+    except ImportError as e:
+        # The natural-language router needs the Needle model, which isn't part of
+        # the published package. Degrade gracefully instead of crashing.
+        console.print("[yellow]The natural-language [bold]ask[/bold] command needs the Needle model, which isn't available in this install.[/yellow]")
+        console.print("[dim]Use the direct commands instead — e.g. [bold]codedna scan[/bold]. Run [bold]codedna --help[/bold] for the full list.[/dim]")
+        raise typer.Exit(1) from e
     route_command(" ".join(query), dry_run=dry_run)
 
 

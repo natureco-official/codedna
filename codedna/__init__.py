@@ -1,4 +1,4 @@
 """CodeDNA — AI Code Transparency Tool."""
 
-__version__ = "0.9.3"
+__version__ = "0.9.4"
 __app_name__ = "codedna"

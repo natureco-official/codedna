@@ -142,7 +142,10 @@ def scan_repository(
         if file.suffix.lower() not in supported_extensions:
             continue
 
-        relative_path = str(file.relative_to(root))
+        # Use POSIX (forward-slash) paths so they match `git ls-files` output on
+        # Windows too (relative_to() yields backslashes there → never matched the
+        # tracked set → scan returned 0 files on Windows).
+        relative_path = file.relative_to(root).as_posix()
 
         # Key fix: when a Git repo is present, scan ONLY git-tracked files.
         # This automatically excludes all build/generated files in .gitignore.

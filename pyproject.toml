@@ -1,6 +1,6 @@
 [project]
 name = "codedna"
-version = "0.9.4"
+version = "0.9.5"
 description = "AI Code Transparency Tool — detect AI-written code, analyze commit quality, track understanding debt, sprint health, bus factor, and more"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -47,9 +47,6 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dashboard = [
-    "next-cmd>=0.5.0",  # Next.js process management
-]
 nl = [
     "huggingface_hub",
     "pyarrow>=14,<18",

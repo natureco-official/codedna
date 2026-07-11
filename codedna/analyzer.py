@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -75,6 +76,7 @@ class FileAnalysisResult:
     comment_ratio: float = 0.0
     avg_function_length: float = 0.0
     single_commit_ratio: float = 0.0
+    content_ai_signal: float = 0.0   # content-based AI signal (code patterns, 0–1)
     total_lines: int = 0
     function_count: int = 0
     unsupported: bool = False   # kept for internal use
@@ -243,8 +245,8 @@ def analyze_file(
     # Cyclomatic complexity (whole file)
     result.complexity_score = _calculate_cyclomatic_complexity(tree.root_node)
 
-    # Calculate AI probability
-    result.ai_probability = _calculate_ai_probability(result)
+    # Calculate AI probability (continuous + content-based)
+    result.ai_probability = _calculate_ai_probability(result, source)
 
     # Generate explanation
     result.explanation = explain_ai_score(result)
@@ -339,28 +341,35 @@ def explain_ai_score(result: FileAnalysisResult) -> list[str]:
     """
     reasons: list[str] = []
 
+    if result.content_ai_signal >= 0.15:
+        pct = int(result.content_ai_signal * 100)
+        reasons.append(
+            f"Code carries AI-style patterns ({pct}% content signal) — e.g. type hints, "
+            f"defensive boilerplate, 'step' comments, emoji"
+        )
+
     if result.comment_ratio > 0.3:
         pct = int(result.comment_ratio * 100)
         reasons.append(
-            f"High comment ratio ({pct}%) — AI-generated code tends to over-comment (+0.20)"
+            f"High comment ratio ({pct}%) — AI-generated code tends to over-comment"
         )
 
     if result.avg_function_length > 50:
         reasons.append(
             f"Long avg. function length ({result.avg_function_length:.0f} lines) — "
-            f"AI tends to produce larger blocks (+0.15)"
+            f"AI tends to produce larger blocks"
         )
 
     if result.single_commit_ratio > 0.7:
         pct = int(result.single_commit_ratio * 100)
         reasons.append(
-            f"High single-commit ratio ({pct}%) — bulk paste indicator (+0.30)"
+            f"High single-commit ratio ({pct}%) — bulk paste indicator"
         )
 
     if result.complexity_score > 10 and result.single_commit_ratio > 0.5:
         reasons.append(
             f"High complexity ({result.complexity_score:.0f}) combined with bulk change — "
-            f"complex AI-generated code pattern (+0.25)"
+            f"complex AI-generated code pattern"
         )
 
     if result.function_count == 0:
@@ -372,33 +381,74 @@ def explain_ai_score(result: FileAnalysisResult) -> list[str]:
     return reasons
 
 
-def _calculate_ai_probability(result: FileAnalysisResult) -> float:
+def _smoothstep(x: float, lo: float, hi: float) -> float:
+    """Continuous 0→1 ramp between lo and hi (replaces hard thresholds so scores
+    are file-specific and granular instead of clustering on a few binned values)."""
+    if hi <= lo:
+        return 1.0 if x >= hi else 0.0
+    t = max(0.0, min(1.0, (x - lo) / (hi - lo)))
+    return t * t * (3.0 - 2.0 * t)
+
+
+# Content-based AI-authorship patterns (regex, weight). These look at what the code
+# actually *is* — the stylistic fingerprints AI assistants tend to leave — rather than
+# only git history. Density of matches feeds the score directly.
+_AI_CONTENT_PATTERNS: list[tuple[str, float]] = [
+    (r"#\s*(Step\s*\d|Initialize|Return the|Create the|Loop through|Iterate over|Handle the|Validate|Check if|Set up|Ensure|First,|Finally,)", 1.0),
+    (r"//\s*(Step\s*\d|Initialize|Return the|Create the|Handle the|Validate|Check if|Set up|Ensure)", 1.0),
+    (r'"""', 0.25),                                      # docstrings (AI documents everything)
+    (r"->\s*[A-Za-z_\[\"']", 0.45),                     # return type hints
+    (r":\s*(str|int|float|bool|list|dict|tuple|Optional|Any|Dict|List|Union)\b", 0.35),  # param type hints
+    (r"^\s*try:\s*$", 0.4),                              # defensive try/except everywhere
+    (r"if\s+\w+\s+is\s+None", 0.4),                      # explicit None guards
+    (r"except\s+Exception\b", 0.35),                     # broad catch-alls
+    (r"[\U0001F300-\U0001FAFF☀-➿←-⇿✓✗]", 0.6),  # emoji/✓/✗/→ in code
+    (r"\b(helper|handler|wrapper|manager|processor|validator)\b", 0.2),  # generic role names
+    (r"console\.(log|error)\(.*(✓|✗|→|✅|❌|🧬|⚠)", 0.5),
+]
+
+
+def _content_ai_signal(source: str) -> float:
+    """A content-based AI signal in [0,1], independent of git history: how strongly
+    the code carries the stylistic fingerprints AI assistants tend to leave."""
+    lines = source.splitlines()
+    n = max(len(lines), 1)
+    total = 0.0
+    for pattern, weight in _AI_CONTENT_PATTERNS:
+        try:
+            matches = sum(1 for line in lines if re.search(pattern, line))
+        except re.error:
+            continue
+        total += (matches / n) * weight
+    # Saturating density → [0,1]; small densities still register, high ones plateau.
+    return 1.0 - math.exp(-4.0 * total)
+
+
+def _calculate_ai_probability(result: FileAnalysisResult, source: str = "") -> float:
+    """Continuous, content-aware AI probability score (0.0 – 1.0).
+
+    Combines graded structural signals (comments, function size, cyclomatic
+    complexity), git-history signals (bulk single-commit paste) and a
+    content-based fingerprint of AI code style. Unlike the previous four binary
+    rules, every input is continuous so scores reflect each file individually.
     """
-    Calculate a rule-based AI probability score (0.0 – 1.0).
+    # Graded structural / history signals — smooth ramps, not on/off thresholds.
+    comment = _smoothstep(result.comment_ratio, 0.12, 0.45)
+    func_len = _smoothstep(result.avg_function_length, 25.0, 90.0)
+    bulk = _smoothstep(result.single_commit_ratio, 0.35, 0.90)
+    complexity = _smoothstep(result.complexity_score, 6.0, 25.0)
 
-    Rules:
-      - comment_ratio > 0.3       → +0.20  (AI tends to over-comment)
-      - avg_function_length > 50  → +0.15  (AI tends to produce large blocks)
-      - single_commit_ratio > 0.7 → +0.30  (bulk paste indicator)
-      - high complexity + single commit → +0.25
-    """
-    score = 0.0
+    # Content fingerprint — the actual code style (strongest single signal).
+    content = _content_ai_signal(source) if source else 0.0
+    result.content_ai_signal = round(content, 4)
 
-    # Rule 1: Excessive comment ratio (AI code tends to over-comment)
-    if result.comment_ratio > 0.3:
-        score += 0.20
-
-    # Rule 2: Long functions (AI tends to produce large blocks)
-    if result.avg_function_length > 50:
-        score += 0.15
-
-    # Rule 3: Large change in a single commit (bulk paste indicator)
-    if result.single_commit_ratio > 0.7:
-        score += 0.30
-
-    # Rule 4: High complexity + single-commit
-    if result.complexity_score > 10 and result.single_commit_ratio > 0.5:
-        score += 0.25
-
-    # Normalize to 0.0 – 1.0
-    return min(score, 1.0)
+    # Weighted blend (weights sum to 1.0). Content carries the most weight because
+    # it inspects what the code *is*, not just how it landed in git.
+    score = (
+        0.14 * comment
+        + 0.12 * func_len
+        + 0.20 * bulk
+        + 0.12 * (complexity * bulk)   # complexity matters most when bulk-committed
+        + 0.42 * content
+    )
+    return round(min(max(score, 0.0), 1.0), 4)

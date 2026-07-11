@@ -8,7 +8,7 @@ from typing import Optional
 from git import InvalidGitRepositoryError, Repo
 from rich.console import Console
 
-from codedna.analyzer import FileAnalysisResult, analyze_file
+from codedna.analyzer import FileAnalysisResult, analyze_file, estimate_understanding
 
 console = Console()
 
@@ -77,6 +77,32 @@ def calculate_single_commit_ratio(repo: Repo, file_path: str) -> float:
     except Exception as exc:
         console.log(f"[dim]single_commit_ratio error for {file_path}: {exc}[/dim]")
         return 0.0
+
+
+def file_git_signals(repo: Repo, file_path: str) -> dict:
+    """Lightweight per-file git signals for the understanding estimate:
+    distinct author count, days since the last commit, and the top author's
+    share of commits (ownership concentration / bus-factor proxy)."""
+    import time
+
+    fallback = {"author_count": 0, "days_since_last": 9999.0, "top_author_share": 1.0}
+    try:
+        commits = list(repo.iter_commits(paths=file_path, max_count=100))
+        if not commits:
+            return fallback
+        authors: dict[str, int] = {}
+        for c in commits:
+            name = c.author.name or c.author.email or "unknown"
+            authors[name] = authors.get(name, 0) + 1
+        total = sum(authors.values()) or 1
+        last_ts = commits[0].committed_date  # iter_commits yields newest first
+        return {
+            "author_count": len(authors),
+            "days_since_last": max(0.0, (time.time() - last_ts) / 86400.0),
+            "top_author_share": max(authors.values()) / total,
+        }
+    except Exception:
+        return fallback
 
 
 def scan_repository(
@@ -160,6 +186,16 @@ def scan_repository(
 
         result = analyze_file(file, single_commit_ratio=single_commit_ratio)
         if not result.unsupported and result.error is None:
+            # Auto-estimate team understanding from git ownership + recency + AI/complexity
+            if repo and relative_path in tracked_files:
+                sig = file_git_signals(repo, relative_path)
+                result.understanding_estimate = estimate_understanding(
+                    result.ai_probability,
+                    result.complexity_score,
+                    sig["author_count"],
+                    sig["days_since_last"],
+                    sig["top_author_share"],
+                )
             results.append(result)
             count += 1
 

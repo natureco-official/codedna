@@ -244,7 +244,8 @@ def scan(
                     "ai_probability": round(s.ai_probability, 4),
                     "complexity": s.complexity_label,
                     "lines": s.total_lines,
-                    "understanding": understanding_scores_map.get(s.file_path),
+                    "understanding": understanding_scores_map.get(s.file_path),          # survey-confirmed (1–5) or null
+                    "understanding_estimate": s.understanding_estimate or None,           # auto-estimated (1–5)
                 }
                 for s in results
             ],
@@ -277,11 +278,15 @@ def scan(
         else:
             complexity = "[green]Low[/green]"
 
-        # Read understanding score from the single-query map
+        # Understanding: survey-confirmed score if we have one, else the auto-estimate.
         understanding_score = understanding_scores_map.get(s.file_path)
         if understanding_score is not None:
             color = "green" if understanding_score >= 4.0 else "yellow" if understanding_score >= 2.5 else "red"
             understanding = f"[{color}]✅ {understanding_score:.1f}/5[/{color}]"
+        elif s.understanding_estimate:
+            est = s.understanding_estimate
+            color = "green" if est >= 4.0 else "yellow" if est >= 2.5 else "red"
+            understanding = f"[{color}]~{est:.1f}/5[/{color}]"   # ~ = auto-estimated
         else:
             understanding = "[dim]⚠️  Unknown[/dim]"
 
@@ -296,11 +301,35 @@ def scan(
     avg_ai = (total_ai / len(results)) * 100 if results else 0
     risk_label, risk_color = _risk_label(avg_ai)
 
+    est_scores = [s.understanding_estimate for s in results if s.understanding_estimate]
+    avg_understanding = (sum(est_scores) / len(est_scores)) if est_scores else None
+    understanding_txt = (
+        f" · Avg. understanding: [bold]{avg_understanding:.1f}/5[/bold]" if avg_understanding is not None else ""
+    )
     console.print(
         f"\n[bold]Repo Summary:[/bold] {len(results)} files scanned · "
-        f"Avg. AI probability: [bold]{avg_ai:.0f}[/bold] · "
+        f"Avg. AI probability: [bold]{avg_ai:.0f}[/bold]{understanding_txt} · "
         f"Risk: [bold {risk_color}]{risk_label}[/bold {risk_color}]\n"
     )
+
+    # Understanding debt — CodeDNA's differentiator: AI-heavy code the team likely
+    # doesn't understand (auto-estimated from git ownership, recency, AI, complexity).
+    debt = [
+        s for s in results
+        if s.understanding_estimate and s.understanding_estimate < 3.0 and s.ai_probability >= 0.3
+    ]
+    if debt:
+        debt.sort(key=lambda s: (s.understanding_estimate, -s.ai_probability))
+        console.print("[bold]🧠 Understanding Debt[/bold] [dim](AI-heavy code the team likely doesn't understand)[/dim]")
+        for s in debt[:5]:
+            rel_path = _shorten_path(s.file_path, str(root))
+            console.print(
+                f"  [red]~{s.understanding_estimate:.1f}/5[/red]  {rel_path}  "
+                f"[dim](AI %{s.ai_probability * 100:.0f})[/dim]"
+            )
+        if len(debt) > 5:
+            console.print(f"  [dim]... and {len(debt) - 5} more[/dim]")
+        console.print()
 
     # AI explanations for high-risk files
     high_risk = [s for s in results if s.ai_probability >= 0.4]

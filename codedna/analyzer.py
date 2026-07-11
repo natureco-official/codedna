@@ -77,6 +77,7 @@ class FileAnalysisResult:
     avg_function_length: float = 0.0
     single_commit_ratio: float = 0.0
     content_ai_signal: float = 0.0   # content-based AI signal (code patterns, 0–1)
+    understanding_estimate: float = 0.0   # auto-estimated team understanding (1–5), 0 = not computed
     total_lines: int = 0
     function_count: int = 0
     unsupported: bool = False   # kept for internal use
@@ -422,6 +423,36 @@ def _content_ai_signal(source: str) -> float:
         total += (matches / n) * weight
     # Saturating density → [0,1]; small densities still register, high ones plateau.
     return 1.0 - math.exp(-4.0 * total)
+
+
+def estimate_understanding(
+    ai_probability: float,
+    complexity_score: float,
+    author_count: int,
+    days_since_last: float,
+    top_author_share: float,
+) -> float:
+    """Auto-estimate how well a file is likely understood by the team (1.0–5.0,
+    higher = better understood) — no manual survey required.
+
+    The 'understanding debt' insight: code that is AI-heavy, complex, stale and
+    owned by a single person is code nobody really understands — i.e. real risk.
+    This is what sets CodeDNA apart from plain "% AI" detectors: it answers
+    "AI wrote it, but does anyone on the team actually understand it?".
+    """
+    complexity_norm = _smoothstep(complexity_score, 6.0, 30.0)
+    staleness = _smoothstep(days_since_last, 30.0, 365.0)   # ramps over a month → a year
+    solo = top_author_share >= 0.85 or author_count <= 1
+
+    score = 5.0
+    score -= 2.3 * ai_probability          # AI-heavy → likely unreviewed / not internalized
+    score -= 1.0 * complexity_norm         # complex → harder to hold in one's head
+    score -= 1.3 * staleness               # untouched for ages → knowledge decays
+    if solo:
+        score -= 0.7 * (0.4 + 0.6 * staleness)   # bus-factor-of-1; worse when also stale
+    if author_count >= 3:
+        score += 0.4                       # shared across the team → better understood
+    return round(max(1.0, min(5.0, score)), 2)
 
 
 def _calculate_ai_probability(result: FileAnalysisResult, source: str = "") -> float:

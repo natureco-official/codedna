@@ -42,7 +42,7 @@ export default function RootLayout({
             <div className="max-w-7xl mx-auto px-6 py-4 text-xs text-gray-700 flex items-center justify-between">
               <span>🧬 CodeDNA</span>
               <a
-                href="http://localhost:8000/docs"
+                href={`${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"}/docs`}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="hover:text-gray-500 transition-colors"

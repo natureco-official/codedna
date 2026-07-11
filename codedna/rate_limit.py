@@ -37,7 +37,7 @@ class RateLimiter:
         self._locks: dict[str, int] = {}  # {key: lock_expiry_time}
         self._lock = Lock()
 
-    def kontrol_et(self, key: str) -> tuple[bool, Optional[int]]:
+    def check(self, key: str) -> tuple[bool, Optional[int]]:
         """
         Check whether to allow the request.
 
@@ -63,7 +63,7 @@ class RateLimiter:
             ]
             return True, None
 
-    def basarisiz_kaydet(self, key: str) -> None:
+    def record_failure(self, key: str) -> None:
         """Record a failed attempt, lock if threshold reached."""
         now = int(time.time())
         with self._lock:
@@ -72,7 +72,7 @@ class RateLimiter:
             if failures >= self._max_attempts:
                 self._locks[key] = now + self._lockout
 
-    def basarili_kaydet(self, key: str) -> None:
+    def record_success(self, key: str) -> None:
         """Reset records on successful login."""
         with self._lock:
             self._records[key] = []

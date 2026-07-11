@@ -114,7 +114,7 @@ export default function ProtectedPage() {
   const violations = modules.filter((m) => m.status === "VIOLATION");
 
   return (
-    <FeatureGate feature="bus_factor" plan={plan}>
+    <FeatureGate feature="protect_modules" plan={plan}>
       <div className="space-y-6">
         <div>
           <h1 className="text-2xl font-bold text-white">🛡️ {t("protect_title")}</h1>

@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.9.2] — Unreleased — "Needle NL"
+
+### ✨ Added
+- **`codedna ask`** — new command: run CodeDNA commands via natural language (powered by Needle)
+  - Usage: `codedna ask "show me the AI score for my last commit"`
+  - Supports `--dry-run` to preview the resolved command
+  - Translates plain English or Turkish queries into the matching `codedna` invocation
+  - Enabled via optional dependency: `pip install "codedna[nl]"` (includes Needle + Hugging Face Hub)
+  - Model (~53 MB) auto-downloads on first use, cached at `~/.codedna/needle/needle.pkl`
+  - Requires Python 3.11+ (documented in the `[nl]` extra)
+
 ## [0.5.2] - 2026-06-24 - "SECURITY CHECK"
 
 ### Added

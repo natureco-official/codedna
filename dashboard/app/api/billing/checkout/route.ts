@@ -40,7 +40,7 @@ export async function POST(req: NextRequest) {
     }
 
     return NextResponse.json(data);
-  } catch (e) {
+  } catch {
     return NextResponse.json(
       { detail: "Cannot connect to API." },
       { status: 503 }

@@ -107,7 +107,7 @@ export default function BillingPage() {
       .then((d) => {
         if (d) setSubscription({ plan: d.plan, subscription_status: d.subscription_status, lemonsqueezy_customer_id: null });
       })
-      .catch(() => {});
+      .catch(() => setCheckoutError("Could not load subscription data."));
   }, [user]);
 
   const handleUpgrade = async (plan: Plan) => {
@@ -145,8 +145,8 @@ export default function BillingPage() {
       } else {
         alert("Customer portal coming soon. For now, use: codedna plan demo");
       }
-    } catch (e) {
-      alert("Error: " + (e instanceof Error ? e.message : "Unknown"));
+    } catch {
+      alert("Error: Could not connect to customer portal.");
     } finally {
       setCancelLoading(false);
     }

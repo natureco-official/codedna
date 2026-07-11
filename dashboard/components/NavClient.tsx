@@ -21,16 +21,19 @@ export function NavClient() {
       <Link href="/" className="text-gray-400 hover:text-cyan-400 transition-colors text-sm font-medium">{t("nav_dashboard")}</Link>
       <Link href="/files" className="text-gray-400 hover:text-cyan-400 transition-colors text-sm font-medium">{t("nav_files")}</Link>
       <Link href="/commits" className="text-gray-400 hover:text-cyan-400 transition-colors text-sm font-medium">{t("nav_commits")}</Link>
-      <Link href="/bus-factor" className="text-gray-400 hover:text-cyan-400 transition-colors text-sm font-medium">🚌</Link>
-      <Link href="/debt" className="text-gray-400 hover:text-cyan-400 transition-colors text-sm font-medium">💰</Link>
-      <Link href="/sprints" className="text-gray-400 hover:text-cyan-400 transition-colors text-sm font-medium">🏃</Link>
-      <Link href="/ai-compare" className="text-gray-400 hover:text-cyan-400 transition-colors text-sm font-medium">🤖</Link>
-      <Link href="/onboarding" className="text-gray-400 hover:text-cyan-400 transition-colors text-sm font-medium">🚀</Link>
-      <Link href="/settings/integrations" className="text-gray-400 hover:text-cyan-400 transition-colors text-sm font-medium">⚙️</Link>
-      <Link href="/protected" className="text-gray-400 hover:text-cyan-400 transition-colors text-sm font-medium">🛡️</Link>
-      <Link href="/interview" className="text-gray-400 hover:text-cyan-400 transition-colors text-sm font-medium">🎯</Link>
+      <Link href="/bus-factor" className="text-gray-400 hover:text-cyan-400 transition-colors text-sm font-medium" aria-label="Bus Factor">🚌</Link>
+      <Link href="/debt" className="text-gray-400 hover:text-cyan-400 transition-colors text-sm font-medium" aria-label="Technical Debt">💰</Link>
+      <Link href="/sprints" className="text-gray-400 hover:text-cyan-400 transition-colors text-sm font-medium" aria-label="Sprints">🏃</Link>
+      <Link href="/ai-compare" className="text-gray-400 hover:text-cyan-400 transition-colors text-sm font-medium" aria-label="AI Comparison">🤖</Link>
+      <Link href="/onboarding" className="text-gray-400 hover:text-cyan-400 transition-colors text-sm font-medium" aria-label="Onboarding">🚀</Link>
+      <Link href="/settings/integrations" className="text-gray-400 hover:text-cyan-400 transition-colors text-sm font-medium" aria-label="Integrations">⚙️</Link>
+      <Link href="/protected" className="text-gray-400 hover:text-cyan-400 transition-colors text-sm font-medium" aria-label="Protected Modules">🛡️</Link>
+      <Link href="/interview" className="text-gray-400 hover:text-cyan-400 transition-colors text-sm font-medium" aria-label="Interview">🎯</Link>
+      <Link href="/trends" className="text-gray-400 hover:text-cyan-400 transition-colors text-sm font-medium" aria-label="Trends">📈</Link>
+      <Link href="/feedback" className="text-gray-400 hover:text-cyan-400 transition-colors text-sm font-medium" aria-label="Feedback">💬</Link>
+      <Link href="/repos" className="text-gray-400 hover:text-cyan-400 transition-colors text-sm font-medium" aria-label="Multi-Repo">📂</Link>
       <Link href="/pricing" className="text-gray-400 hover:text-cyan-400 transition-colors text-sm font-medium">{t("nav_pricing")}</Link>
-      <a href="http://localhost:8000/docs" target="_blank" rel="noopener noreferrer" className="text-gray-600 hover:text-gray-400 transition-colors text-xs">API ↗</a>
+      <a href={`${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"}/docs`} target="_blank" rel="noopener noreferrer" className="text-gray-600 hover:text-gray-400 transition-colors text-xs">API ↗</a>
 
       {/* Auth state */}
       {user ? (

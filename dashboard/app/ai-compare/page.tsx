@@ -6,7 +6,7 @@ import { useTranslation } from "@/lib/i18n";
 import { getCurrentPlan } from "@/lib/plan";
 import { FeatureGate } from "@/components/FeatureGate";
 import { ErrorBanner } from "@/components/ErrorBanner";
-import { CostInfoTooltip } from "@/components/CostInfoTooltip";
+
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -77,7 +77,6 @@ export default function AIComparePage() {
         <div className="flex items-start gap-2 bg-amber-500/10 border border-amber-500/20 rounded-xl px-4 py-3">
           <span className="text-amber-400 mt-0.5">⚠️</span>
           <p className="text-xs text-amber-400/80">{t("ai_compare_disclaimer")}</p>
-          <CostInfoTooltip />
         </div>
 
         {error && <ErrorBanner />}

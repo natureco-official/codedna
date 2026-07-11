@@ -5,17 +5,18 @@
 export type Plan = "free" | "pro" | "team" | "enterprise";
 
 export interface PlanLimits {
-  max_repos: number;        // -1 = unlimited
-  max_files_scan: number;   // -1 = unlimited
-  history_days: number;     // -1 = unlimited
+  max_repos: number;
+  max_files_scan: number;
+  history_days: number;
   dashboard_access: boolean;
   github_actions: boolean;
   slack_notify: boolean;
-  bus_factor: boolean;      // Phase 5
-  sprint_health: boolean;   // Phase 6
-  ai_comparison: boolean;   // Phase 7
-  team_members: number;     // -1 = unlimited
-  interview_tool: boolean;  // Phase 8
+  bus_factor: boolean;
+  sprint_health: boolean;
+  ai_comparison: boolean;
+  team_members: number;
+  interview_tool: boolean;
+  protect_modules: boolean;
 }
 
 export const PLAN_LIMITS: Record<Plan, PlanLimits> = {
@@ -23,7 +24,7 @@ export const PLAN_LIMITS: Record<Plan, PlanLimits> = {
     max_repos: 1,
     max_files_scan: 50,
     history_days: 7,
-    dashboard_access: false,
+    dashboard_access: true,
     github_actions: false,
     slack_notify: false,
     bus_factor: false,
@@ -31,6 +32,7 @@ export const PLAN_LIMITS: Record<Plan, PlanLimits> = {
     ai_comparison: false,
     team_members: 1,
     interview_tool: false,
+    protect_modules: false,
   },
   pro: {
     max_repos: -1,
@@ -44,6 +46,7 @@ export const PLAN_LIMITS: Record<Plan, PlanLimits> = {
     ai_comparison: false,
     team_members: 1,
     interview_tool: false,
+    protect_modules: false,
   },
   team: {
     max_repos: -1,
@@ -57,6 +60,7 @@ export const PLAN_LIMITS: Record<Plan, PlanLimits> = {
     ai_comparison: false,
     team_members: 10,
     interview_tool: false,
+    protect_modules: true,
   },
   enterprise: {
     max_repos: -1,
@@ -70,6 +74,7 @@ export const PLAN_LIMITS: Record<Plan, PlanLimits> = {
     ai_comparison: true,
     team_members: -1,
     interview_tool: true,
+    protect_modules: true,
   },
 };
 

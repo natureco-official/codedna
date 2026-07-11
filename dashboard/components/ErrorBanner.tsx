@@ -2,7 +2,6 @@
 
 import { useTranslation } from "@/lib/i18n";
 
-/** Banner shown when API connection fails */
 export function ErrorBanner({ message }: { message?: string }) {
   const { t } = useTranslation();
 
@@ -11,11 +10,11 @@ export function ErrorBanner({ message }: { message?: string }) {
       <span className="text-red-400 text-lg mt-0.5">⚠️</span>
       <div>
         <p className="text-red-400 font-semibold text-sm">
-          {t("error_api").split("—")[0].trim()}
+          {t("error_api")}
         </p>
-        <p className="text-red-300/70 text-xs mt-0.5">
-          {message ?? t("error_api")}
-        </p>
+        {message && (
+          <p className="text-red-300/70 text-xs mt-0.5">{message}</p>
+        )}
       </div>
     </div>
   );

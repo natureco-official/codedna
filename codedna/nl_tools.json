@@ -1,0 +1,127 @@
+[
+  {
+    "name": "scan",
+    "description": "Scan the current repo and show an AI-generated code risk report.",
+    "parameters": {
+      "max_files": {"type": "integer", "description": "Maximum number of files to scan. Defaults to 200.", "required": false},
+      "min_risk": {"type": "number", "description": "Minimum AI probability filter, 0.0 to 1.0.", "required": false}
+    }
+  },
+  {
+    "name": "status",
+    "description": "Show the AI score and commit message quality for the last commit.",
+    "parameters": {}
+  },
+  {
+    "name": "commit_history",
+    "description": "Show a table of past commits with their AI scores and understanding scores. This is about commit history, not sprint history.",
+    "parameters": {
+      "limit": {"type": "integer", "description": "Number of past commits to show. Defaults to 20.", "required": false}
+    }
+  },
+  {
+    "name": "bus_factor",
+    "description": "Run repo-wide bus factor analysis and show ownership risks.",
+    "parameters": {
+      "critical": {"type": "boolean", "description": "Show only critical files where bus factor equals 1.", "required": false},
+      "max_files": {"type": "integer", "description": "Maximum number of files to process. Defaults to 500.", "required": false}
+    }
+  },
+  {
+    "name": "debt",
+    "description": "Calculate technical debt cost in dollars for the whole repository. Only set the file parameter if the user names a specific file path explicitly.",
+    "parameters": {
+      "rate": {"type": "number", "description": "Hourly developer rate in dollars. Defaults to 75.", "required": false},
+      "file": {"type": "string", "description": "An actual file path, e.g. 'src/auth.py'. Do not fill this with a description or topic — only a real path the user typed.", "required": false}
+    }
+  },
+  {
+    "name": "protect_add",
+    "description": "Add protection to a file or directory so AI is not allowed to edit it. Use this when the user wants to START protecting, guard, or lock a path. This is the opposite of protect_remove.",
+    "parameters": {
+      "file_path": {"type": "string", "description": "Path to protect, e.g. 'auth/' or 'payment/login.py'.", "required": true},
+      "threshold": {"type": "number", "description": "Minimum required understanding score, 0 to 5. Defaults to 3.5.", "required": false},
+      "label": {"type": "string", "description": "Human-readable label for this protected module.", "required": false}
+    }
+  },
+  {
+    "name": "protect_remove",
+    "description": "Remove protection from a previously protected file, so AI is allowed to edit it again. Use this when the user wants to STOP, unprotect, lift protection, or remove the protected status from a path. This is the opposite of protect_add.",
+    "parameters": {
+      "file_path": {"type": "string", "description": "Path to unprotect.", "required": true}
+    }
+  },
+  {
+    "name": "protect_list",
+    "description": "Show all protected modules and their current status.",
+    "parameters": {}
+  },
+  {
+    "name": "protect_check",
+    "description": "Show only protected modules that currently violate their understanding threshold.",
+    "parameters": {}
+  },
+  {
+    "name": "sprint_create",
+    "description": "Create a new sprint and calculate its health score.",
+    "parameters": {
+      "name": {"type": "string", "description": "Sprint name, e.g. 'Sprint 14'.", "required": true},
+      "start": {"type": "string", "description": "Start date in YYYY-MM-DD format.", "required": true},
+      "end": {"type": "string", "description": "End date in YYYY-MM-DD format.", "required": true}
+    }
+  },
+  {
+    "name": "sprint_health",
+    "description": "Show the latest sprint's health score, velocity, and quality.",
+    "parameters": {}
+  },
+  {
+    "name": "sprint_history",
+    "description": "Show past sprints as a table.",
+    "parameters": {
+      "limit": {"type": "integer", "description": "Number of past sprints to show. Defaults to 10.", "required": false}
+    }
+  },
+  {
+    "name": "export",
+    "description": "Export all CodeDNA data as JSON or CSV.",
+    "parameters": {
+      "fmt": {"type": "string", "description": "Export format: 'json' or 'csv'. Defaults to json.", "required": false},
+      "output": {"type": "string", "description": "Output file path. If omitted, prints to stdout.", "required": false}
+    }
+  },
+  {
+    "name": "webhook_show",
+    "description": "Show the current Slack or Discord webhook configuration.",
+    "parameters": {}
+  },
+  {
+    "name": "webhook_test",
+    "description": "Send a test webhook notification to Slack or Discord.",
+    "parameters": {}
+  },
+  {
+    "name": "webhook_reset",
+    "description": "Clear the current webhook configuration.",
+    "parameters": {}
+  },
+  {
+    "name": "watch",
+    "description": "Watch the git repo for new commits and analyze them automatically.",
+    "parameters": {
+      "interval": {"type": "integer", "description": "Poll interval in seconds. Defaults to 30.", "required": false},
+      "once": {"type": "boolean", "description": "Run once and exit, useful for cron jobs.", "required": false},
+      "notify": {"type": "boolean", "description": "Send a webhook notification when a new commit is found.", "required": false}
+    }
+  },
+  {
+    "name": "report",
+    "description": "Generate an HTML report for the repo.",
+    "parameters": {}
+  },
+  {
+    "name": "doctor",
+    "description": "Run a system health check on the CodeDNA installation itself (dependencies, config, database). This is about the CodeDNA tool's own health, not sprint health or project health.",
+    "parameters": {}
+  }
+]

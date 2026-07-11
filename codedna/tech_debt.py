@@ -128,7 +128,7 @@ def calculate_file_debt(
         try:
             from codedna.analyzer import analyze_file
             result = analyze_file(p)
-            if result.desteklenmiyor or result.hata:
+            if result.unsupported or result.error:
                 return None
             ai = result.ai_probability
             complexity = result.complexity_score

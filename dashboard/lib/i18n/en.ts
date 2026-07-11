@@ -284,6 +284,49 @@ export const en = {
   billing_status_cancelled: "Cancelled",
   billing_status_past_due: "Past Due",
   billing_status_none: "—",
+
+  // Trends
+  trends_title: "Trend Charts",
+  trends_subtitle: "AI score and understanding over time",
+  trends_ai_trend: "AI Score Trend",
+  trends_understanding_trend: "Understanding Trend",
+  trends_daily_ai: "Daily Avg AI Probability",
+  trends_daily_understanding: "Daily Avg Understanding Score",
+  trends_commit_count: "Commits per Day",
+  trends_no_data: "Not enough data to display trends yet. Run more scans first.",
+  trends_last_days: "last {days} days",
+
+  // Feedback
+  feedback_title: "Feedback",
+  feedback_subtitle: "Help improve AI detection accuracy",
+  feedback_rating_correct: "Correct",
+  feedback_rating_incorrect: "Incorrect",
+  feedback_rating_unsure: "Unsure",
+  feedback_note_placeholder: "Optional: what did the AI miss?",
+  feedback_submit: "Submit Feedback",
+  feedback_submitted: "Feedback saved. Thank you!",
+  feedback_history: "Past Feedback",
+  feedback_no_data: "No feedback submitted yet.",
+  feedback_col_file: "File",
+  feedback_col_rating: "Rating",
+  feedback_col_note: "Note",
+  feedback_col_date: "Date",
+
+  // Multi-Repo
+  repos_title: "Multi-Repository",
+  repos_subtitle: "Manage multiple repositories in one dashboard",
+  repos_add: "Add Repository",
+  repos_name: "Repository name",
+  repos_path: "File system path",
+  repos_added: "Repository added successfully.",
+  repos_removed: "Repository removed.",
+  repos_no_data: "No repositories configured.",
+  repos_col_name: "Name",
+  repos_col_path: "Path",
+  repos_col_added: "Added",
+  repos_col_actions: "Actions",
+  repos_remove: "Remove",
+  repos_help: "Add file system paths to your repositories to view them in a single dashboard.",
 } as const;
 
 export type TranslationKey = keyof typeof en;

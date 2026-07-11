@@ -74,7 +74,8 @@ def calculate_single_commit_ratio(repo: Repo, file_path: str) -> float:
         largest = max(commit_contributions)
         return min(largest / total, 1.0)
 
-    except Exception:
+    except Exception as exc:
+        console.log(f"[dim]single_commit_ratio error for {file_path}: {exc}[/dim]")
         return 0.0
 
 

@@ -95,10 +95,6 @@ async function apiFetch<T>(path: string): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-export async function getHealth(): Promise<HealthResponse> {
-  return apiFetch<HealthResponse>("/health");
-}
-
 export async function getRepoSummary(): Promise<RepoSummary> {
   return apiFetch<RepoSummary>("/repo/summary");
 }

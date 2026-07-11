@@ -7,6 +7,41 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
+
+CONVENTIONAL_COMMIT_PATTERNS = {
+    "feat": "Feature",
+    "fix": "Bug Fix",
+    "docs": "Documentation",
+    "refactor": "Refactor",
+    "style": "Style",
+    "test": "Test",
+    "chore": "Chore",
+    "ci": "CI",
+    "build": "Build",
+    "perf": "Performance",
+    "revert": "Revert",
+    "wip": "WIP",
+    "merge": "Merge",
+    "release": "Release",
+}
+
+COMMIT_QUALITY_MAP = {
+    "Feature": 4.5,
+    "Bug Fix": 4.0,
+    "Refactor": 3.5,
+    "Documentation": 3.5,
+    "Style": 2.0,
+    "Test": 4.0,
+    "Chore": 2.5,
+    "CI": 3.0,
+    "Build": 3.0,
+    "Performance": 4.5,
+    "Revert": 1.0,
+    "WIP": 1.5,
+    "Merge": 2.0,
+    "Release": 3.5,
+}
+
 import tree_sitter_python as tspython
 import tree_sitter_javascript as tsjavascript
 from tree_sitter import Language, Parser, Node
@@ -16,11 +51,9 @@ try:
     import tree_sitter_typescript as tstypescript
     _TS_LANG = tstypescript.language_typescript()
     _TSX_LANG = tstypescript.language_tsx()
-    _TS_AVAILABLE = True
 except Exception:
     _TS_LANG = tsjavascript.language()
     _TSX_LANG = tsjavascript.language()
-    _TS_AVAILABLE = False
 
 # Supported language map
 LANGUAGE_MAP: dict[str, tuple] = {
@@ -46,6 +79,9 @@ class FileAnalysisResult:
     function_count: int = 0
     unsupported: bool = False   # kept for internal use
     error: Optional[str] = None     # kept for internal use
+    explanation: list[str] = field(default_factory=list)
+    commit_type: Optional[str] = None
+    commit_quality: float = 2.5
 
     @property
     def complexity_label(self) -> str:
@@ -210,7 +246,130 @@ def analyze_file(
     # Calculate AI probability
     result.ai_probability = _calculate_ai_probability(result)
 
+    # Generate explanation
+    result.explanation = explain_ai_score(result)
+
     return result
+
+
+def analyze_commit_message(message: str) -> dict:
+    """
+    Analyze a commit message and return:
+      - type: conventional commit type (feat, fix, etc.)
+      - category: human-readable category
+      - quality_score: estimated quality (0-5)
+      - has_ticket: whether it references a ticket (JIRA/GitHub issue)
+      - is_conventional: whether it follows conventional commit format
+      - scope: the scope if present (e.g. "auth" in "feat(auth): ...")
+    """
+    result = {
+        "type": None,
+        "category": None,
+        "quality_score": 2.5,
+        "has_ticket": False,
+        "is_conventional": False,
+        "scope": None,
+    }
+
+    if not message:
+        return result
+
+    first_line = message.strip().split("\n")[0]
+
+    # Ticket reference detection
+    ticket_patterns = [
+        r"[A-Z]+-\d+",           # JIRA: PROJ-123
+        r"#\d+",                 # GitHub: #42
+        r"gh-\d+",               # GitHub CLI: gh-42
+    ]
+    for pat in ticket_patterns:
+        if re.search(pat, first_line, re.IGNORECASE):
+            result["has_ticket"] = True
+            break
+
+    # Conventional commit: type(scope): description
+    conv_match = re.match(
+        r"^(fix|feat|docs|refactor|style|test|chore|ci|build|perf|revert)"
+        r"(\(([^)]+)\))?\s*:\s*(.+)",
+        first_line,
+        re.IGNORECASE,
+    )
+    if conv_match:
+        result["is_conventional"] = True
+        result["type"] = conv_match.group(1).lower()
+        result["scope"] = conv_match.group(3)
+        raw_type = conv_match.group(1).lower()
+        category = CONVENTIONAL_COMMIT_PATTERNS.get(raw_type, "Unknown")
+        result["category"] = category
+        result["quality_score"] = COMMIT_QUALITY_MAP.get(category, 2.5)
+
+        # Bonus for having a scope
+        if result["scope"]:
+            result["quality_score"] = min(result["quality_score"] + 0.5, 5.0)
+
+        # Bonus for having a ticket reference
+        if result["has_ticket"]:
+            result["quality_score"] = min(result["quality_score"] + 0.5, 5.0)
+    else:
+        # Non-conventional message — estimate quality
+        words = len(first_line.split())
+        if words < 3:
+            result["quality_score"] = 1.0
+            result["category"] = "Vague"
+        elif first_line.startswith("Merge"):
+            result["category"] = "Merge"
+            result["quality_score"] = 2.0
+        elif "wip" in first_line.lower() or "work in progress" in first_line.lower():
+            result["category"] = "WIP"
+            result["quality_score"] = 1.5
+        elif words > 10:
+            result["quality_score"] = 3.5
+            result["category"] = "Descriptive"
+        else:
+            result["category"] = "Standard"
+            result["quality_score"] = 2.5
+
+    return result
+
+
+def explain_ai_score(result: FileAnalysisResult) -> list[str]:
+    """
+    Generate human-readable explanations for the AI probability score.
+    Returns a list of reasons why the file scored as it did.
+    """
+    reasons: list[str] = []
+
+    if result.comment_ratio > 0.3:
+        pct = int(result.comment_ratio * 100)
+        reasons.append(
+            f"High comment ratio ({pct}%) — AI-generated code tends to over-comment (+0.20)"
+        )
+
+    if result.avg_function_length > 50:
+        reasons.append(
+            f"Long avg. function length ({result.avg_function_length:.0f} lines) — "
+            f"AI tends to produce larger blocks (+0.15)"
+        )
+
+    if result.single_commit_ratio > 0.7:
+        pct = int(result.single_commit_ratio * 100)
+        reasons.append(
+            f"High single-commit ratio ({pct}%) — bulk paste indicator (+0.30)"
+        )
+
+    if result.complexity_score > 10 and result.single_commit_ratio > 0.5:
+        reasons.append(
+            f"High complexity ({result.complexity_score:.0f}) combined with bulk change — "
+            f"complex AI-generated code pattern (+0.25)"
+        )
+
+    if result.function_count == 0:
+        reasons.append("No functions detected — may be a config/data file")
+
+    if not reasons:
+        reasons.append("All metrics within normal range — likely human-written code")
+
+    return reasons
 
 
 def _calculate_ai_probability(result: FileAnalysisResult) -> float:

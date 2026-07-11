@@ -9,19 +9,11 @@
  *   - The client side only knows whether the user is logged in
  */
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-
 export interface UserData {
   user_id: number;
   email: string;
   plan: string;
   subscription_status: string;
-}
-
-export interface SubscriptionData {
-  plan: string;
-  subscription_status: string;
-  lemonsqueezy_customer_id: string | null;
 }
 
 /** Log in — via Next.js API route (sets httpOnly cookie) */
@@ -95,37 +87,4 @@ export async function getCurrentUser(): Promise<UserData | null> {
   }
 }
 
-/** Request checkout URL directly from FastAPI */
-export async function getCheckoutUrl(
-  plan: string,
-  token: string
-): Promise<string | null> {
-  try {
-    const res = await fetch(`${API_URL}/billing/checkout`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
-      },
-      body: JSON.stringify({ plan }),
-    });
-    if (!res.ok) return null;
-    const data = await res.json();
-    return data.checkout_url ?? null;
-  } catch {
-    return null;
-  }
-}
 
-/** Fetch subscription status */
-export async function getSubscriptionStatus(token: string): Promise<SubscriptionData | null> {
-  try {
-    const res = await fetch(`${API_URL}/billing/subscription`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    if (!res.ok) return null;
-    return res.json();
-  } catch {
-    return null;
-  }
-}

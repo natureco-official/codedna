@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.9.7] - 2026-07-26 — "Windows: hook finds the tool, and stops crashing"
+
+### Fixed
+- **The post-commit hook crashed on a non-UTF-8 Windows console.** When stdin is not
+  connected — the normal case inside a git hook — the survey catches `EOFError` and prints
+  a warning saying it is skipping. That warning began with `⚠`, which does not exist in
+  cp1254 (Turkish locale), so the error handler itself raised `UnicodeEncodeError` and
+  dumped a stack trace over the commit. `main()` now reconfigures stdout/stderr to UTF-8
+  with `errors="replace"`, and the warning is plain ASCII. Box drawing renders correctly
+  too; it was coming out as `+-----+`.
+- **The hook could not find codedna on Windows.** It looked only in `.venv/bin`, the POSIX
+  layout, so a checkout with a working virtualenv fell through to the "not found" branch
+  while `codedna.exe` sat in `.venv/Scripts`.
+- **The hook nagged on every commit.** When the executable is genuinely absent it now exits
+  quietly instead of printing an install hint after every single commit.
+
 ## [0.9.6] - 2026-07-11 — "Understanding debt, estimated"
 
 ### Added

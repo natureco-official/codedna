@@ -3146,8 +3146,28 @@ def _risk_label(percentage: float) -> tuple[str, str]:
         return "LOW", "green"
 
 
+def _force_utf8_output() -> None:
+    """Make stdout/stderr able to carry the symbols the UI prints.
+
+    On Windows the console code page is whatever the system locale says — cp1254 on a
+    Turkish install — and characters like ⚠ or an em dash are simply not in it. Printing
+    one raises UnicodeEncodeError, which is how a post-commit hook that meant to say
+    "skipping the survey" ended up dumping a traceback instead.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:
+            continue
+        try:
+            reconfigure(encoding="utf-8", errors="replace")
+        except (ValueError, OSError):
+            # Detached or already-wrapped stream: nothing to do, and never worth crashing over.
+            pass
+
+
 def main() -> None:
     """CLI entry point."""
+    _force_utf8_output()
     app()
 
 

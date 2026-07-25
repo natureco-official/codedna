@@ -18,7 +18,7 @@ tests/sample_repo/
 
 # Dashboard build çıktısı
 dashboard/.next/
-dashboard/node_modules/
+node_modules/
 
 # Ortam değişkenleri — asla repoya girmesin
 .env

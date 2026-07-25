@@ -24,11 +24,11 @@ dashboard/node_modules/
 .env
 .env.local
 .env.*.local
+
 .env.ls
 
 # macOS / Python artefacts
 .DS_Store
-__pycache__/
 
 # Trained Needle models — 150 MB of pickles. Distributed as release assets, not in git.
 # Pickle deserialisation executes code, so these should never be fetched implicitly.

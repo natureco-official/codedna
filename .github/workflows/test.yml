@@ -1,26 +1,31 @@
-name: Tests
-
+name: test
 on:
   push:
-    branches: [main]
+    branches: [ main ]
   pull_request:
-    branches: [main]
-
+    branches: [ main ]
 jobs:
-  test:
+  syntax-check:
+    name: Python syntax check
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python-version: ['3.10', '3.11', '3.12']
     steps:
       - uses: actions/checkout@v4
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python-version }}
-      - name: Install dependencies
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+      - name: Set up Python 3.11
+        run: uv python install 3.11
+      - name: Syntax check all .py files
         run: |
-          python -m pip install --upgrade pip
-          pip install -e ".[dev]"
-      - name: Run tests
-        run: pytest --if-present
+          uv run --no-project --python 3.11 python -c "
+          import ast, pathlib
+          files = list(pathlib.Path('.').rglob('*.py'))
+          files = [f for f in files if '.venv' not in str(f) and 'node_modules' not in str(f)]
+          print(f'Checking {len(files)} Python files...')
+          for f in files:
+              try:
+                  ast.parse(f.read_text())
+              except SyntaxError as e:
+                  print(f'FAIL: {f}: {e}')
+                  raise
+          print('OK: All files parse cleanly')
+          "

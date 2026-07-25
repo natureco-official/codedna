@@ -25,20 +25,35 @@ if [ -t 1 ] && [ -r /dev/tty ]; then
     exec < /dev/tty
 fi
 
-# Check if codedna is in PATH
+# Find codedna: PATH first, then the usual virtualenv locations.
+# .venv/Scripts is where Windows puts console scripts, .venv/bin is POSIX — only
+# the POSIX path was checked before, so a Windows checkout with a working .venv
+# still fell through to the "not found" branch on every commit.
+CODEDNA=""
 if command -v codedna &> /dev/null; then
-    codedna status --hook
+    CODEDNA="codedna"
 else
-    # Try running via uv (for development environments)
     REPO_ROOT="$(git rev-parse --show-toplevel)"
-    if [ -f "$REPO_ROOT/.venv/bin/codedna" ]; then
-        "$REPO_ROOT/.venv/bin/codedna" status --hook
-    elif [ -f "$HOME/.local/bin/codedna" ]; then
-        "$HOME/.local/bin/codedna" status --hook
-    else
-        echo "[CodeDNA] 'codedna' command not found. Try: pip install codedna"
-    fi
+    for candidate in \\
+        "$REPO_ROOT/.venv/bin/codedna" \\
+        "$REPO_ROOT/.venv/Scripts/codedna.exe" \\
+        "$REPO_ROOT/.venv/Scripts/codedna" \\
+        "$HOME/.local/bin/codedna"; do
+        if [ -f "$candidate" ]; then
+            CODEDNA="$candidate"
+            break
+        fi
+    done
 fi
+
+# Not installed? Exit quietly. This hook is optional tooling — a teammate who
+# never installed codedna should not have a warning printed at them on every
+# single commit they make.
+if [ -z "$CODEDNA" ]; then
+    exit 0
+fi
+
+"$CODEDNA" status --hook
 """
 
 

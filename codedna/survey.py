@@ -37,8 +37,12 @@ def _get_score(question: str, question_no: int) -> Optional[int]:
     except EOFError:
         # stdin could not be read — not an intentional user choice.
         # Show an informative warning instead of silently swallowing.
+        #
+        # Deliberately ASCII: this branch fires exactly when there is no terminal, which
+        # is also when the output stream is most likely a legacy Windows code page. A "⚠"
+        # here raised UnicodeEncodeError and turned a skipped survey into a traceback.
         console.print(
-            "  [dim red]⚠ Could not read terminal input for survey "
+            "  [dim red]! Could not read terminal input for survey "
             "(stdin not connected). Skipping survey.[/dim red]"
         )
         return None

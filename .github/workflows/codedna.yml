@@ -1,0 +1,53 @@
+name: CodeDNA Analysis
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+
+jobs:
+  analyze:
+    name: AI Code Analysis
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+
+    steps:
+      - name: Checkout repo (full history)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install CodeDNA
+        run: pip install codedna
+
+      - name: Scan all files (info)
+        run: codedna scan
+        continue-on-error: true
+
+      - name: High risk file check (≥50%)
+        id: risk_check
+        run: |
+          codedna scan --min-risk 0.5
+          echo "scan_exit=$?" >> "$GITHUB_OUTPUT"
+        continue-on-error: true
+
+      - name: Critical risk warning (≥70%) — does NOT block pipeline
+        run: |
+          echo "::group::⚠️ High AI Risk Report"
+          codedna scan --min-risk 0.7 && echo "✅ No files above 70% risk threshold." || echo "⚠️ High-risk files detected — review recommended."
+          echo "::endgroup::"
+        continue-on-error: true
+
+      - name: Post PR comment (PR events only)
+        if: github.event_name == 'pull_request'
+        run: codedna pr-comment
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        continue-on-error: true

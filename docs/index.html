@@ -1,0 +1,365 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CodeDNA — AI Code Transparency Tool</title>
+  <meta name="description" content="Detect AI-written code, analyze commit quality, track understanding debt across your team.">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #0a0a0f;
+      color: #e4e4e7;
+      line-height: 1.6;
+    }
+    .container { max-width: 1100px; margin: 0 auto; padding: 0 24px; }
+
+    /* Hero */
+    .hero {
+      text-align: center;
+      padding: 80px 0 60px;
+      background: linear-gradient(180deg, #0a0a0f 0%, #111118 100%);
+    }
+    .hero h1 {
+      font-size: clamp(40px, 6vw, 72px);
+      font-weight: 800;
+      background: linear-gradient(135deg, #a78bfa, #60a5fa);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      margin-bottom: 16px;
+    }
+    .hero .dna-icon { font-size: 48px; display: block; margin-bottom: 16px; }
+    .hero p {
+      font-size: clamp(16px, 2.5vw, 20px);
+      color: #a1a1aa;
+      max-width: 650px;
+      margin: 0 auto 32px;
+    }
+    .hero .subtitle {
+      font-size: 14px;
+      color: #71717a;
+      margin-top: -16px;
+      margin-bottom: 32px;
+    }
+    .btn-group { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+    .btn {
+      padding: 14px 32px;
+      border-radius: 12px;
+      font-weight: 600;
+      font-size: 16px;
+      text-decoration: none;
+      transition: all 0.2s;
+    }
+    .btn-primary {
+      background: linear-gradient(135deg, #7c3aed, #3b82f6);
+      color: #fff;
+    }
+    .btn-primary:hover { transform: translateY(-2px); box-shadow: 0 8px 24px rgba(124, 58, 237, 0.4); }
+    .btn-secondary {
+      background: #1e1e2e;
+      color: #e4e4e7;
+      border: 1px solid #2e2e3e;
+    }
+    .btn-secondary:hover { background: #2e2e3e; }
+
+    /* Problem */
+    .problem {
+      background: #111118;
+      padding: 60px 0;
+      border-top: 1px solid #1e1e2e;
+      border-bottom: 1px solid #1e1e2e;
+    }
+    .problem h2, .features h2, .commands h2, .pricing h2 { font-size: 28px; margin-bottom: 24px; text-align: center; }
+    .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 20px; margin-top: 32px; }
+    .stat-card {
+      background: #16161e;
+      border: 1px solid #1e1e2e;
+      border-radius: 12px;
+      padding: 24px;
+      text-align: center;
+    }
+    .stat-card .num { font-size: 36px; font-weight: 800; color: #a78bfa; }
+    .stat-card p { color: #a1a1aa; font-size: 14px; margin-top: 4px; }
+
+    /* Features */
+    .features { padding: 60px 0; }
+    .feature-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; }
+    .feature-card {
+      background: #16161e;
+      border: 1px solid #1e1e2e;
+      border-radius: 12px;
+      padding: 28px;
+    }
+    .feature-card .icon { font-size: 28px; margin-bottom: 12px; }
+    .feature-card h3 { font-size: 18px; margin-bottom: 8px; }
+    .feature-card p { color: #a1a1aa; font-size: 14px; }
+
+    /* Commands */
+    .commands { padding: 60px 0; background: #111118; border-top: 1px solid #1e1e2e; border-bottom: 1px solid #1e1e2e; }
+    .cmd-group { margin-bottom: 28px; }
+    .cmd-group h3 { color: #a78bfa; font-size: 16px; margin-bottom: 12px; }
+    .cmd-group code {
+      display: inline-block;
+      background: #0a0a0f;
+      border: 1px solid #1e1e2e;
+      padding: 4px 12px;
+      border-radius: 6px;
+      font-family: 'SF Mono', 'Fira Code', monospace;
+      font-size: 13px;
+      color: #e4e4e7;
+      margin: 4px 4px 4px 0;
+    }
+
+    /* Pricing */
+    .pricing { padding: 60px 0; }
+    .pricing-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 20px; margin-top: 32px; }
+    .pricing-card {
+      background: #16161e;
+      border: 1px solid #1e1e2e;
+      border-radius: 12px;
+      padding: 28px;
+      text-align: center;
+    }
+    .pricing-card.featured { border-color: #7c3aed; position: relative; }
+    .pricing-card.featured::before {
+      content: 'Most Popular';
+      position: absolute;
+      top: -12px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: #7c3aed;
+      padding: 4px 16px;
+      border-radius: 20px;
+      font-size: 12px;
+      font-weight: 600;
+    }
+    .pricing-card .plan { font-size: 14px; color: #a1a1aa; text-transform: uppercase; letter-spacing: 1px; }
+    .pricing-card .price { font-size: 36px; font-weight: 800; margin: 12px 0; }
+    .pricing-card .price span { font-size: 16px; color: #a1a1aa; font-weight: 400; }
+    .pricing-card ul { list-style: none; margin: 20px 0; }
+    .pricing-card li { padding: 6px 0; font-size: 14px; color: #a1a1aa; }
+    .pricing-card li.yes { color: #e4e4e7; }
+    .pricing-card li.yes::before { content: '✓ '; color: #22c55e; }
+
+    /* Footer */
+    footer {
+      text-align: center;
+      padding: 40px 0;
+      border-top: 1px solid #1e1e2e;
+      color: #71717a;
+      font-size: 14px;
+    }
+
+    @media (max-width: 640px) {
+      .hero { padding: 60px 0 40px; }
+      .feature-grid { grid-template-columns: 1fr; }
+      .pricing-grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+
+<section class="hero">
+  <div class="container">
+    <span class="dna-icon">🧬</span>
+    <h1>CodeDNA</h1>
+    <p>Understand every line of code you commit. Is it really yours, or AI's?</p>
+    <p class="subtitle">AI Code Transparency Tool — Detect, Measure, and Track Understanding Debt</p>
+    <div class="btn-group">
+      <a href="https://pypi.org/project/codedna/" class="btn btn-primary">pip install codedna</a>
+      <a href="https://github.com/natureco-official/codedna" class="btn btn-secondary">View on GitHub →</a>
+    </div>
+  </div>
+</section>
+
+<section class="problem">
+  <div class="container">
+    <h2>The Problem</h2>
+    <p style="text-align:center;color:#a1a1aa;max-width:600px;margin:0 auto;">In 2026, developers write <strong style="color:#e4e4e7;">78% of their code with AI help</strong>. The result? Understanding debt, bus factor = 1, and AI-generated bugs that no one understands.</p>
+    <div class="stats">
+      <div class="stat-card">
+        <div class="num">78%</div>
+        <p>AI-assisted code in 2026</p>
+      </div>
+      <div class="stat-card">
+        <div class="num">80%+</div>
+        <p>AI detection accuracy</p>
+      </div>
+      <div class="stat-card">
+        <div class="num">4</div>
+        <p>Detection metrics</p>
+      </div>
+      <div class="stat-card">
+        <div class="num">30+</div>
+        <p>CLI commands</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="features">
+  <div class="container">
+    <h2>Features</h2>
+    <div class="feature-grid">
+      <div class="feature-card">
+        <div class="icon">🔍</div>
+        <h3>AI Detection</h3>
+        <p>4-metric fingerprint — comment ratio, function length, single-commit patterns, and complexity analysis. 80%+ accuracy.</p>
+      </div>
+      <div class="feature-card">
+        <div class="icon">📝</div>
+        <h3>Commit Quality</h3>
+        <p>Commit message quality scoring, conventional commit detection, ticket reference parsing.</p>
+      </div>
+      <div class="feature-card">
+        <div class="icon">📊</div>
+        <h3>Export & Import</h3>
+        <p>Export all data as JSON or CSV. Import to restore. Full API support.</p>
+      </div>
+      <div class="feature-card">
+        <div class="icon">👤</div>
+        <h3>Understanding Score</h3>
+        <p>Survey-based developer understanding tracking. Trend charts and historical view.</p>
+      </div>
+      <div class="feature-card">
+        <div class="icon">🚌</div>
+        <h3>Bus Factor Analysis</h3>
+        <p>Ownership tracking, risk identification for single points of failure.</p>
+      </div>
+      <div class="feature-card">
+        <div class="icon">💰</div>
+        <h3>Technical Debt</h3>
+        <p>Cost estimation in USD. Track debt trends over time.</p>
+      </div>
+      <div class="feature-card">
+        <div class="icon">📈</div>
+        <h3>Trend Charts</h3>
+        <p>Time-series charts for AI probability, understanding scores, and commit frequency.</p>
+      </div>
+      <div class="feature-card">
+        <div class="icon">👀</div>
+        <h3>Live Monitoring</h3>
+        <p><code>codedna watch</code> — auto-analyze new commits with configurable polling.</p>
+      </div>
+      <div class="feature-card">
+        <div class="icon">🔔</div>
+        <h3>Webhooks</h3>
+        <p>Slack/Discord alerts on high AI risk detection. Configurable thresholds.</p>
+      </div>
+      <div class="feature-card">
+        <div class="icon">💬</div>
+        <h3>Feedback Loop</h3>
+        <p>Mark AI detections as correct/incorrect. Dashboard feedback page.</p>
+      </div>
+      <div class="feature-card">
+        <div class="icon">📂</div>
+        <h3>Multi-Repo</h3>
+        <p>Add/remove repos via dashboard. Centralized view across projects.</p>
+      </div>
+      <div class="feature-card">
+        <div class="icon">🐳</div>
+        <h3>Docker</h3>
+        <p><code>docker compose up</code> — self-hosted API + dashboard.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="commands">
+  <div class="container">
+    <h2>Commands (30+)</h2>
+    <div class="cmd-group">
+      <h3>Analysis</h3>
+      <code>codedna scan</code> <code>codedna status</code> <code>codedna history</code>
+      <code>codedna report</code> <code>codedna export</code> <code>codedna import</code>
+    </div>
+    <div class="cmd-group">
+      <h3>Monitoring</h3>
+      <code>codedna watch</code> <code>codedna watch --once</code> <code>codedna webhook</code>
+    </div>
+    <div class="cmd-group">
+      <h3>Protection</h3>
+      <code>codedna protect add</code> <code>codedna protect list</code> <code>codedna protect check</code>
+    </div>
+    <div class="cmd-group">
+      <h3>Team</h3>
+      <code>codedna bus-factor</code> <code>codedna debt</code> <code>codedna sprint health</code>
+      <code>codedna onboarding</code> <code>codedna interview</code>
+    </div>
+    <div class="cmd-group">
+      <h3>Infrastructure</h3>
+      <code>codedna serve</code> <code>codedna dashboard</code> <code>codedna doctor</code>
+      <code>codedna update</code> <code>codedna security-check</code>
+    </div>
+  </div>
+</section>
+
+<section class="pricing">
+  <div class="container">
+    <h2>Pricing</h2>
+    <div class="pricing-grid">
+      <div class="pricing-card">
+        <div class="plan">Free</div>
+        <div class="price">$0 <span>/ month</span></div>
+        <ul>
+          <li class="yes">1 repository</li>
+          <li class="yes">7-day history</li>
+          <li class="yes">AI detection</li>
+          <li>Dashboard</li>
+          <li>Webhooks</li>
+        </ul>
+      </div>
+      <div class="pricing-card featured">
+        <div class="plan">Pro</div>
+        <div class="price">$12 <span>/ month</span></div>
+        <ul>
+          <li class="yes">Unlimited repos</li>
+          <li class="yes">90-day history</li>
+          <li class="yes">Dashboard</li>
+          <li class="yes">Export & Import</li>
+          <li class="yes">Webhooks & Watch</li>
+        </ul>
+      </div>
+      <div class="pricing-card">
+        <div class="plan">Team</div>
+        <div class="price">$24 <span>/ month</span></div>
+        <ul>
+          <li class="yes">365-day history</li>
+          <li class="yes">Bus Factor</li>
+          <li class="yes">Sprint Health</li>
+          <li class="yes">Onboarding</li>
+          <li class="yes">Protected Modules</li>
+        </ul>
+      </div>
+      <div class="pricing-card">
+        <div class="plan">Enterprise</div>
+        <div class="price">$49 <span>/ month</span></div>
+        <ul>
+          <li class="yes">Unlimited history</li>
+          <li class="yes">AI Tool Comparison</li>
+          <li class="yes">Interview Tool</li>
+          <li class="yes">SSO</li>
+          <li class="yes">Dedicated support</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="container">
+    <p>🧬 CodeDNA — MIT License — Made with 🌿 in Turkey</p>
+    <p style="margin-top:8px;">
+      <a href="https://github.com/natureco-official/codedna" style="color:#60a5fa;text-decoration:none;">GitHub</a>
+      &nbsp;·&nbsp;
+      <a href="https://pypi.org/project/codedna/" style="color:#60a5fa;text-decoration:none;">PyPI</a>
+      &nbsp;·&nbsp;
+      <a href="https://www.linkedin.com/in/gencayolgun/" style="color:#60a5fa;text-decoration:none;">LinkedIn</a>
+    </p>
+  </div>
+</footer>
+
+</body>
+</html>

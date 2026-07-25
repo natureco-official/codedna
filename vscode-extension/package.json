@@ -1,0 +1,85 @@
+{
+  "name": "codedna-vscode",
+  "displayName": "CodeDNA",
+  "description": "AI Code Transparency — inline risk & understanding indicators",
+  "version": "0.1.0",
+  "publisher": "codedna",
+  "icon": "images/icon.png",
+  "galleryBanner": {
+    "color": "#0a0a0a",
+    "theme": "dark"
+  },
+  "badges": [
+    {
+      "url": "https://img.shields.io/pypi/v/codedna",
+      "href": "https://pypi.org/project/codedna/",
+      "description": "PyPI version"
+    }
+  ],
+  "keywords": ["ai", "code-quality", "git", "developer-tools", "technical-debt"],
+  "categories": ["Other", "Linters"],
+  "homepage": "https://github.com/natureco-official/codedna",
+  "bugs": {
+    "url": "https://github.com/natureco-official/codedna/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/natureco-official/codedna"
+  },
+  "license": "MIT",
+  "engines": { "vscode": "^1.85.0" },
+  "activationEvents": ["onStartupFinished"],
+  "main": "./out/extension.js",
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "vscode:prepublish": "npm run compile",
+    "package": "vsce package",
+    "publish": "vsce publish"
+  },
+  "devDependencies": {
+    "@vscode/vsce": "^2.24.0"
+  },
+  "contributes": {
+    "configuration": {
+      "title": "CodeDNA",
+      "properties": {
+        "codedna.apiUrl": {
+          "type": "string",
+          "default": "http://localhost:8000",
+          "description": "CodeDNA API server URL (run 'codedna serve' first)"
+        },
+        "codedna.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable/disable CodeDNA extension"
+        },
+        "codedna.dashboardUrl": {
+          "type": "string",
+          "default": "http://localhost:3000",
+          "description": "CodeDNA dashboard URL"
+        }
+      }
+    },
+    "commands": [
+      {
+        "command": "codedna.openDashboard",
+        "title": "CodeDNA: Open Dashboard"
+      },
+      {
+        "command": "codedna.refreshFile",
+        "title": "CodeDNA: Refresh Current File Analysis"
+      }
+    ]
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "vscode:prepublish": "npm run compile"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.0.0"
+  }
+}

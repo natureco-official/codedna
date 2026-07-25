@@ -18,9 +18,18 @@ tests/sample_repo/
 
 # Dashboard build çıktısı
 dashboard/.next/
-dashboard/node_modules/
+node_modules/
 
 # Ortam değişkenleri — asla repoya girmesin
 .env
 .env.local
 .env.*.local
+
+.env.ls
+
+# macOS / Python artefacts
+.DS_Store
+
+# Trained Needle models — 150 MB of pickles. Distributed as release assets, not in git.
+# Pickle deserialisation executes code, so these should never be fetched implicitly.
+checkpoints/

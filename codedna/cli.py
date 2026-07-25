@@ -1,0 +1,3155 @@
+"""CodeDNA CLI — typer-based command-line interface."""
+
+from __future__ import annotations
+
+import os
+import sys
+from datetime import datetime
+from pathlib import Path
+from typing import Optional
+
+import typer
+from rich.console import Console
+from rich.panel import Panel
+from rich.table import Table
+from rich.text import Text
+
+from codedna import __version__
+from codedna.db import (
+    export_all_data,
+    get_all_file_understanding_scores,
+    get_commit_history,
+    get_db_path,
+    get_file_scores_for_commit,
+    get_latest_commit,
+    import_data,
+    init_db,
+    save_commit,
+    save_file_score,
+    update_understanding_score,
+)
+from codedna.git_hook import find_git_root, install_hook, install_ci_workflow, is_hook_installed, uninstall_hook
+from codedna.scorer import get_repo, scan_repository, score_latest_commit
+from codedna.survey import run_survey
+
+app = typer.Typer(
+    name="codedna",
+    help="🧬 CodeDNA — AI code transparency tool",
+    add_completion=False,
+    no_args_is_help=True,
+)
+console = Console()
+
+
+def _version_callback(value: bool) -> None:
+    """Callback for the --version flag."""
+    if value:
+        try:
+            from importlib.metadata import version as _v
+            ver = _v("codedna")
+        except Exception:
+            ver = "0.2.29"
+        console.print(f"codedna {ver}")
+        raise typer.Exit()
+
+
+@app.callback()
+def _main_callback(
+    version: bool = typer.Option(
+        False, "--version", "-V",
+        callback=_version_callback,
+        is_eager=True,
+        help="Show version and exit.",
+    ),
+) -> None:
+    """CodeDNA — root callback."""
+    pass
+
+
+def _get_db(repo_path: Optional[Path] = None) -> Path:
+    """Return the repo-specific database path."""
+    root = repo_path or find_git_root() or Path.cwd()
+    return get_db_path(root)
+
+
+# ---------------------------------------------------------------------------
+# codedna init
+# ---------------------------------------------------------------------------
+@app.command()
+def init(
+    repo: Optional[Path] = typer.Option(None, "--repo", "-r", help="Git repo directory"),
+    with_ci: bool = typer.Option(False, "--with-ci", help="Also write a GitHub Actions CI template"),
+) -> None:
+    """Install the git hook, create the database, and optionally write a CI template."""
+    console.print()
+    console.print(
+        Panel.fit(
+            "[bold cyan]🧬 CodeDNA[/bold cyan] Setup starting...",
+            border_style="cyan",
+        )
+    )
+
+    # Find repo root
+    root = repo or find_git_root()
+    if not root:
+        console.print("[bold red]Error:[/bold red] Git repo not found. Run 'git init' first.")
+        raise typer.Exit(1)
+
+    console.print(f"[dim]Repo root:[/dim] {root}")
+
+    # Initialize database
+    db_path = _get_db(root)
+    init_db(db_path)
+    console.print(f"[green]✓[/green] Database created: [dim]{db_path}[/dim]")
+
+    # Install the hook
+    if is_hook_installed(root):
+        console.print("[yellow]⚠[/yellow]  Post-commit hook already installed.")
+    else:
+        if install_hook(root):
+            console.print("[green]✓[/green] Post-commit hook installed.")
+        else:
+            console.print("[red]✗[/red] Hook installation failed.")
+            raise typer.Exit(1)
+
+    # CI template
+    if with_ci:
+        install_ci_workflow(root)
+
+    info = (
+        "[bold green]CodeDNA successfully installed![/bold green]\n"
+        "Automatic analysis will run after every [bold]git commit[/bold].\n\n"
+        "[dim]• Scan the full repo:[/dim] [cyan]codedna scan[/cyan]\n"
+        "[dim]• Show latest commit score:[/dim] [cyan]codedna status[/cyan]\n"
+        "[dim]• View score history:[/dim] [cyan]codedna history[/cyan]\n"
+        "[dim]• Start the API server:[/dim] [cyan]codedna serve[/cyan]\n"
+        "[dim]• Generate HTML report:[/dim] [cyan]codedna report[/cyan]"
+    )
+    if with_ci:
+        info += "\n[dim]• CI template:[/dim] [cyan].github/workflows/codedna.yml[/cyan]"
+
+    console.print()
+    console.print(Panel(info, border_style="green", padding=(1, 2)))
+
+
+# ---------------------------------------------------------------------------
+# codedna account  (NatureCo SSO — shared with the NatureCo CLI & terminal)
+# ---------------------------------------------------------------------------
+@app.command()
+def account(
+    action: str = typer.Argument("whoami", help="login | logout | whoami"),
+) -> None:
+    """Sign in with your NatureCo account (single account across the ecosystem)."""
+    from codedna import natureco_account as nc
+
+    if action == "whoami":
+        me = nc.whoami()
+        if me:
+            console.print(f"[green]✓[/green] Signed in as [bold]{me.get('email')}[/bold]")
+        else:
+            console.print("[yellow]Not signed in.[/yellow] Run [bold cyan]codedna account login[/bold cyan]")
+        return
+
+    if action == "logout":
+        nc.logout()
+        console.print("[green]✓[/green] Signed out.")
+        return
+
+    if action == "login":
+        email = typer.prompt("NatureCo email").strip()
+        use_pw = typer.confirm("Sign in with a password? (No = email a code/login link)", default=False)
+        try:
+            if use_pw:
+                password = typer.prompt("Password", hide_input=True)
+                res = nc.login_with_password(email, password)
+            else:
+                nc.send_otp(email)
+                console.print("[dim]Check your email — paste the 6-digit code or the full login link.[/dim]")
+                value = typer.prompt("Code or login link").strip()
+                res = nc.verify_link(value) if "://" in value else nc.verify_otp(email, value)
+            who = (res.get("user") or {}).get("email") or email
+            console.print(f"[green]✓ Signed in as[/green] [bold]{who}[/bold]")
+        except Exception as e:  # noqa: BLE001
+            console.print(f"[red]✗ Sign-in failed:[/red] {e}")
+            raise typer.Exit(1) from e
+        return
+
+    console.print(f"[red]Unknown action:[/red] {action}  [dim](use: login | logout | whoami)[/dim]")
+    raise typer.Exit(1)
+
+
+# ---------------------------------------------------------------------------
+# codedna scan
+# ---------------------------------------------------------------------------
+@app.command()
+def scan(
+    repo: Optional[Path] = typer.Option(None, "--repo", "-r", help="Git repo directory"),
+    max_files: int = typer.Option(200, "--max", "-m", help="Maximum number of files to scan"),
+    min_risk: float = typer.Option(0.0, "--min-risk", help="Minimum AI probability filter (0.0-1.0)"),
+    json_out: bool = typer.Option(False, "--json", help="Output machine-readable JSON (for tooling)"),
+) -> None:
+    """Scan current repo and show AI risk report."""
+    if not json_out:
+        console.print()
+        console.print("[bold cyan]🧬 CodeDNA[/bold cyan] — Scanning repo...\n")
+
+    root = repo or find_git_root() or Path.cwd()
+
+    if json_out:
+        results = scan_repository(root, max_files=max_files)
+    else:
+        with console.status("[dim]Analyzing files...[/dim]"):
+            results = scan_repository(root, max_files=max_files)
+
+    if not results:
+        if json_out:
+            import json as _json
+            print(_json.dumps({
+                "version": __version__, "repo": str(root), "file_count": 0,
+                "avg_ai_probability": 0.0, "max_ai_probability": 0.0, "files": [],
+            }, indent=2))
+            raise typer.Exit(0)
+        console.print("[yellow]No supported files found to scan.[/yellow]")
+        console.print("[dim]Supported: .py .js .jsx .ts .tsx[/dim]")
+        return
+
+    # Apply min risk filter
+    if min_risk > 0:
+        results = [s for s in results if s.ai_probability >= min_risk]
+
+    # Sort by AI probability (highest first)
+    results.sort(key=lambda s: s.ai_probability, reverse=True)
+
+    # Fetch all file understanding scores in a single query
+    db_path = _get_db(root)
+    understanding_scores_map: dict[str, float] = {}
+    try:
+        understanding_scores_map = get_all_file_understanding_scores(db_path=db_path)
+    except Exception:
+        pass
+
+    # --json: machine-readable output for tooling (e.g. the NatureCo CLI `dna` command)
+    if json_out:
+        import json as _json
+        avg_ai = (sum(s.ai_probability for s in results) / len(results)) if results else 0.0
+        payload = {
+            "version": __version__,
+            "repo": str(root),
+            "file_count": len(results),
+            "avg_ai_probability": round(avg_ai, 4),
+            "max_ai_probability": round(max((s.ai_probability for s in results), default=0.0), 4),
+            "files": [
+                {
+                    "file": s.file_path,
+                    "ai_probability": round(s.ai_probability, 4),
+                    "complexity": s.complexity_label,
+                    "lines": s.total_lines,
+                    "understanding": understanding_scores_map.get(s.file_path),          # survey-confirmed (1–5) or null
+                    "understanding_estimate": s.understanding_estimate or None,           # auto-estimated (1–5)
+                }
+                for s in results
+            ],
+        }
+        print(_json.dumps(payload, indent=2, default=str))
+        raise typer.Exit(0)
+
+    # Build table
+    table = Table(
+        title="",
+        border_style="dim",
+        show_lines=True,
+        header_style="bold",
+    )
+    table.add_column("File", style="white", min_width=25)
+    table.add_column("AI Probability", justify="center", min_width=14)
+    table.add_column("Complexity", justify="center", min_width=12)
+    table.add_column("Lines", justify="right", min_width=6)
+    table.add_column("Understanding", justify="center", min_width=14)
+
+    total_ai = 0.0
+    for s in results:
+        percentage = int(s.ai_probability * 100)
+        ai_text = f"{s.ai_color} %{percentage}"
+
+        if s.complexity_label == "High":
+            complexity = "[red]High[/red]"
+        elif s.complexity_label == "Medium":
+            complexity = "[yellow]Medium[/yellow]"
+        else:
+            complexity = "[green]Low[/green]"
+
+        # Understanding: survey-confirmed score if we have one, else the auto-estimate.
+        understanding_score = understanding_scores_map.get(s.file_path)
+        if understanding_score is not None:
+            color = "green" if understanding_score >= 4.0 else "yellow" if understanding_score >= 2.5 else "red"
+            understanding = f"[{color}]✅ {understanding_score:.1f}/5[/{color}]"
+        elif s.understanding_estimate:
+            est = s.understanding_estimate
+            color = "green" if est >= 4.0 else "yellow" if est >= 2.5 else "red"
+            understanding = f"[{color}]~{est:.1f}/5[/{color}]"   # ~ = auto-estimated
+        else:
+            understanding = "[dim]⚠️  Unknown[/dim]"
+
+        rel_path = _shorten_path(s.file_path, str(root))
+
+        table.add_row(rel_path, ai_text, complexity, str(s.total_lines), understanding)
+        total_ai += s.ai_probability
+
+    console.print(table)
+
+    # Summary line
+    avg_ai = (total_ai / len(results)) * 100 if results else 0
+    risk_label, risk_color = _risk_label(avg_ai)
+
+    est_scores = [s.understanding_estimate for s in results if s.understanding_estimate]
+    avg_understanding = (sum(est_scores) / len(est_scores)) if est_scores else None
+    understanding_txt = (
+        f" · Avg. understanding: [bold]{avg_understanding:.1f}/5[/bold]" if avg_understanding is not None else ""
+    )
+    console.print(
+        f"\n[bold]Repo Summary:[/bold] {len(results)} files scanned · "
+        f"Avg. AI probability: [bold]{avg_ai:.0f}[/bold]{understanding_txt} · "
+        f"Risk: [bold {risk_color}]{risk_label}[/bold {risk_color}]\n"
+    )
+
+    # Understanding debt — CodeDNA's differentiator: AI-heavy code the team likely
+    # doesn't understand (auto-estimated from git ownership, recency, AI, complexity).
+    debt = [
+        s for s in results
+        if s.understanding_estimate and s.understanding_estimate < 3.0 and s.ai_probability >= 0.3
+    ]
+    if debt:
+        debt.sort(key=lambda s: (s.understanding_estimate, -s.ai_probability))
+        console.print("[bold]🧠 Understanding Debt[/bold] [dim](AI-heavy code the team likely doesn't understand)[/dim]")
+        for s in debt[:5]:
+            rel_path = _shorten_path(s.file_path, str(root))
+            console.print(
+                f"  [red]~{s.understanding_estimate:.1f}/5[/red]  {rel_path}  "
+                f"[dim](AI %{s.ai_probability * 100:.0f})[/dim]"
+            )
+        if len(debt) > 5:
+            console.print(f"  [dim]... and {len(debt) - 5} more[/dim]")
+        console.print()
+
+    # AI explanations for high-risk files
+    high_risk = [s for s in results if s.ai_probability >= 0.4]
+    if high_risk and len(high_risk) <= 5:
+        console.print("[bold]🤖 AI Score Explanation:[/bold]")
+        for s in high_risk[:3]:
+            rel_path = _shorten_path(s.file_path, str(root))
+            console.print(f"  [bold]{rel_path}[/bold] (%{s.ai_probability * 100:.0f})")
+            for reason in s.explanation[:2]:
+                console.print(f"    [dim]• {reason}[/dim]")
+        if len(high_risk) > 3:
+            console.print(f"    [dim]... and {len(high_risk) - 3} more files[/dim]")
+        console.print()
+
+    # Webhook notification
+    try:
+        from codedna.webhooks import notify_scan_result
+        notify_scan_result(
+            avg_ai=avg_ai / 100,
+            max_ai=max(s.ai_probability for s in results),
+            repo_name=root.name,
+        )
+    except Exception:
+        pass
+
+    # AI analysis box
+    try:
+        from codedna.ai_box import print_ai_box
+        summary = (
+            f"CodeDNA scan: {len(results)} files\n"
+            f"Avg AI probability: {avg_ai:.0f}%\n"
+            f"Risk level: {risk_label}\n"
+            f"Files: {', '.join(str(root / s.file_path) for s in results[:10])}"
+        )
+        print_ai_box("codedna scan", summary)
+    except Exception:
+        pass
+
+
+# ---------------------------------------------------------------------------
+# codedna status
+# ---------------------------------------------------------------------------
+@app.command()
+def status(
+    repo: Optional[Path] = typer.Option(None, "--repo", "-r", help="Git repo directory"),
+    hook: bool = typer.Option(False, "--hook", hidden=True, help="Run in hook mode (ask survey)"),
+) -> None:
+    """Show last commit score (and ask survey in hook mode)."""
+    console.print()
+    root = repo or find_git_root() or Path.cwd()
+    db_path = _get_db(root)
+
+    # Initialize DB if not exists
+    init_db(db_path)
+
+    git_repo = get_repo(root)
+    if not git_repo:
+        console.print("[bold red]Error:[/bold red] Git repo not found.")
+        raise typer.Exit(1)
+
+    with console.status("[dim]Analyzing latest commit...[/dim]"):
+        commit_hash, results = score_latest_commit(root)
+
+    if not commit_hash:
+        console.print("[yellow]No commits found yet.[/yellow]")
+        return
+
+    # Get commit info
+    try:
+        commit = git_repo.head.commit
+        author = f"{commit.author.name}"
+        timestamp = int(commit.committed_date)
+        message = commit.message.strip().splitlines()[0][:60]
+    except Exception:
+        author = "Unknown"
+        timestamp = 0
+        message = ""
+
+    # Analyze commit message
+    try:
+        from codedna.analyzer import analyze_commit_message
+        msg_analysis = analyze_commit_message(message)
+    except Exception:
+        msg_analysis = {}
+
+    # Survey (hook mode only)
+    understanding_score: Optional[float] = None
+    if hook:
+        understanding_score = run_survey(commit_hash)
+
+    # Save to DB
+    save_commit(
+        commit_hash=commit_hash,
+        author=author,
+        timestamp=timestamp,
+        files_changed=len(results),
+        understanding_score=understanding_score,
+        db_path=db_path,
+    )
+    for s in results:
+        save_file_score(
+            commit_hash=commit_hash,
+            file_path=s.file_path,
+            ai_probability=s.ai_probability,
+            complexity_score=s.complexity_score,
+            comment_ratio=s.comment_ratio,
+            understanding_score=understanding_score,
+            db_path=db_path,
+        )
+
+    # Show summary
+    avg_ai = sum(s.ai_probability for s in results) / len(results) if results else 0.0
+    if results:
+        risk_label, risk_color = _risk_label(avg_ai * 100)
+
+        understanding_display = (
+            f"[bold green]{understanding_score:.1f}/5[/bold green]"
+            if understanding_score is not None
+            else "[dim]No survey[/dim]"
+        )
+
+        commit_type_str = ""
+        if msg_analysis.get("is_conventional"):
+            scope = f"({msg_analysis['scope']})" if msg_analysis.get("scope") else ""
+            commit_type_str = f"  [dim]{msg_analysis['category']}{scope}[/dim]"
+        elif msg_analysis.get("category"):
+            commit_type_str = f"  [dim]{msg_analysis['category']}[/dim]"
+
+        console.print(
+            Panel(
+                f"[bold]Commit:[/bold] [dim]{commit_hash[:8]}[/dim]  [dim]{message}[/dim]{commit_type_str}\n"
+                f"[bold]Author:[/bold] {author}\n"
+                f"[bold]Changed files:[/bold] {len(results)}\n"
+                f"[bold]Avg. AI probability:[/bold] [bold {risk_color}]{avg_ai*100:.0f}% ({risk_label})[/bold {risk_color}]\n"
+                f"[bold]Understanding score:[/bold] {understanding_display}",
+                title="[bold cyan]🧬 CodeDNA — Commit Score[/bold cyan]",
+                border_style="cyan",
+                padding=(1, 2),
+            )
+        )
+        console.print("[dim]Commit score saved.[/dim]\n")
+
+    # Post-commit hook: check protected module violations and warn (NO blocking)
+    if hook:
+        try:
+            from codedna.protection import show_violation_warnings
+            warnings = show_violation_warnings(db_path)
+            for warning in warnings:
+                console.print(f"[bold red]{warning}[/bold red]")
+        except Exception:
+            pass  # Never breaks the hook
+        return
+
+    # AI explanations for high-risk files
+    if results:
+        high_risk = [s for s in results if s.ai_probability >= 0.4]
+        if high_risk:
+            console.print("[bold]🤖 AI Score Explanation:[/bold]")
+            for s in high_risk[:3]:
+                rel_path = _shorten_path(s.file_path, str(root))
+                console.print(f"  [bold]{rel_path}[/bold] (%{s.ai_probability * 100:.0f})")
+                for reason in s.explanation[:2]:
+                    console.print(f"    [dim]• {reason}[/dim]")
+            if len(high_risk) > 3:
+                console.print(f"    [dim]... and {len(high_risk) - 3} more files[/dim]")
+            console.print()
+
+        # Webhook notification
+        try:
+            from codedna.webhooks import notify_scan_result
+            max_ai = max(s.ai_probability for s in results)
+            notify_scan_result(
+                avg_ai=avg_ai,
+                max_ai=max_ai,
+                repo_name=root.name,
+                commit_hash=commit_hash,
+            )
+        except Exception:
+            pass
+
+    if not results:
+        console.print(
+            f"[bold]Commit:[/bold] [dim]{commit_hash[:8]}[/dim]\n"
+            "[dim]No supported code files found in this commit.[/dim]"
+        )
+
+    # AI analysis box
+    try:
+        from codedna.ai_box import print_ai_box
+        if results:
+            status_summary = (
+                f"Commit: {commit_hash[:8]}\n"
+                f"Author: {author}\n"
+                f"Message: {message}\n"
+                f"Files changed: {len(results)}\n"
+                f"Avg AI probability: {avg_ai*100:.0f}%\n"
+                f"Files: {', '.join(s.file_path for s in results[:5])}"
+            )
+        else:
+            status_summary = f"Commit: {commit_hash[:8]}\nNo supported code files."
+        print_ai_box("codedna status", status_summary)
+    except Exception:
+        pass
+
+
+# ---------------------------------------------------------------------------
+# codedna history
+# ---------------------------------------------------------------------------
+@app.command()
+def history(
+    repo: Optional[Path] = typer.Option(None, "--repo", "-r", help="Git repo directory"),
+    limit: int = typer.Option(20, "--limit", "-n", help="Number of commits to show"),
+) -> None:
+    """Show historical commit scores as a table."""
+    console.print()
+    root = repo or find_git_root() or Path.cwd()
+    db_path = _get_db(root)
+
+    init_db(db_path)
+    rows = get_commit_history(limit=limit, db_path=db_path)
+
+    if not rows:
+        console.print(
+            "[yellow]No commits recorded yet.[/yellow]\n"
+            "[dim]Tip: run 'codedna init' to set up, then make a commit.[/dim]"
+        )
+        return
+
+    table = Table(
+        title=f"[bold cyan]🧬 CodeDNA — Last {len(rows)} Commits[/bold cyan]",
+        border_style="dim",
+        show_lines=True,
+        header_style="bold",
+    )
+    table.add_column("Commit", style="dim", min_width=10)
+    table.add_column("Author", min_width=15)
+    table.add_column("Date", min_width=17)
+    table.add_column("Files", justify="right", min_width=6)
+    table.add_column("Understanding", justify="center", min_width=12)
+
+    for row in rows:
+        date_str = (
+            datetime.fromtimestamp(row["timestamp"]).strftime("%Y-%m-%d %H:%M")
+            if row["timestamp"]
+            else "?"
+        )
+
+        if row["understanding_score"] is not None:
+            score = row["understanding_score"]
+            if score >= 4.0:
+                understanding = f"[green]✅ {score:.1f}/5[/green]"
+            elif score >= 2.5:
+                understanding = f"[yellow]🔶 {score:.1f}/5[/yellow]"
+            else:
+                understanding = f"[red]🔴 {score:.1f}/5[/red]"
+        else:
+            understanding = "[dim]⚠️  None[/dim]"
+
+        table.add_row(
+            row["commit_hash"][:8],
+            row["author"] or "?",
+            date_str,
+            str(row["files_changed"] or 0),
+            understanding,
+        )
+
+    console.print(table)
+    console.print()
+
+
+# ---------------------------------------------------------------------------
+# codedna serve
+# ---------------------------------------------------------------------------
+@app.command()
+def serve(
+    host: str = typer.Option("127.0.0.1", "--host", help="IP address to listen on"),
+    port: int = typer.Option(8000, "--port", "-p", help="Port number"),
+    reload: bool = typer.Option(False, "--reload", help="Auto-reload in development mode"),
+    repo: Optional[Path] = typer.Option(None, "--repo", "-r", help="Git repo directory"),
+) -> None:
+    """Start the FastAPI REST server."""
+    import uvicorn
+
+    root = repo or find_git_root() or Path.cwd()
+    db_path = _get_db(root)
+
+    # Set environment variables (read by api.py)
+    os.environ.setdefault("CODEDNA_REPO_PATH", str(root))
+    os.environ.setdefault("CODEDNA_DB_PATH", str(db_path))
+
+    init_db(db_path)
+
+    console.print()
+    console.print(
+        Panel(
+            f"[bold cyan]🧬 CodeDNA API[/bold cyan] starting...\n\n"
+            f"[bold]Address:[/bold]  [link]http://{host}:{port}[/link]\n"
+            f"[bold]Docs:[/bold]     [link]http://{host}:{port}/docs[/link]\n"
+            f"[bold]Repo:[/bold]     [dim]{root}[/dim]\n"
+            f"[bold]Database:[/bold] [dim]{db_path}[/dim]\n\n"
+            "[dim]Press Ctrl+C to stop[/dim]",
+            border_style="cyan",
+            padding=(1, 2),
+        )
+    )
+
+    uvicorn.run(
+        "codedna.api:app",
+        host=host,
+        port=port,
+        reload=reload,
+        log_level="info",
+    )
+
+
+# ---------------------------------------------------------------------------
+# codedna report
+# ---------------------------------------------------------------------------
+@app.command()
+def report(
+    output: Path = typer.Option(Path("codedna-report.html"), "--output", "-o", help="Output file"),
+    repo: Optional[Path] = typer.Option(None, "--repo", "-r", help="Git repo directory"),
+    open_browser: bool = typer.Option(False, "--open", help="Open report in browser"),
+) -> None:
+    """Generate HTML report."""
+    import webbrowser
+    from datetime import datetime
+    from codedna.api import _build_html_report
+
+    root = repo or find_git_root() or Path.cwd()
+    db_path = _get_db(root)
+    init_db(db_path)
+
+    console.print()
+    console.print("[bold cyan]🧬 CodeDNA[/bold cyan] — Generating HTML report...\n")
+
+    with console.status("[dim]Analyzing files...[/dim]"):
+        results = scan_repository(root, max_files=200)
+
+    results.sort(key=lambda s: s.ai_probability, reverse=True)
+    commits = get_commit_history(limit=50, db_path=db_path)
+
+    all_ai = [s.ai_probability for s in results]
+    avg_ai = sum(all_ai) / len(all_ai) if all_ai else 0.0
+    risk_label, _ = _risk_label(avg_ai * 100)
+
+    understanding_scorelari = [
+        float(c["understanding_score"])
+        for c in commits
+        if c["understanding_score"] is not None
+    ]
+    avg_understanding = sum(understanding_scorelari) / len(understanding_scorelari) if understanding_scorelari else None
+
+    html = _build_html_report(
+        repo_name=root.name,
+        total_files=len(results),
+        avg_ai=avg_ai,
+        risk=risk_label,
+        avg_understanding=avg_understanding,
+        total_commits=len(commits),
+        files=results,
+        commits=commits,
+        root=root,
+    )
+
+    output.write_text(html, encoding="utf-8")
+    console.print(f"[green]✓[/green] Report generated: [bold]{output.resolve()}[/bold]")
+    console.print(
+        f"  [dim]{len(results)} files · "
+        f"Avg. AI: {avg_ai*100:.0f}% · "
+        f"Risk: {risk_label}[/dim]"
+    )
+
+    if open_browser:
+        webbrowser.open(output.resolve().as_uri())
+        console.print("[dim]Opening in browser...[/dim]")
+
+    console.print()
+
+
+# ---------------------------------------------------------------------------
+# codedna ai-compare
+# ---------------------------------------------------------------------------
+@app.command(name="ai-compare")
+def ai_compare(
+    repo: Optional[Path] = typer.Option(None, "--repo", "-r", help="Git repo directory"),
+) -> None:
+    """Show repo-wide AI tool comparison table."""
+    from codedna.ai_fingerprint import compare_tools_in_repo
+    from codedna.plan import is_feature_available
+
+    if not is_feature_available("ai_comparison"):
+        console.print(
+            Panel(
+                "[bold yellow]🔒 This feature is available on Enterprise plan.[/bold yellow]\n\n"
+                "[dim]To upgrade:[/dim] [cyan]codedna plan activate <LICENSE_KEY>[/cyan]",
+                border_style="yellow",
+                padding=(1, 2),
+            )
+        )
+        raise typer.Exit(1)
+
+    root = repo or find_git_root() or Path.cwd()
+    db_path = _get_db(root)
+    init_db(db_path)
+
+    console.print()
+    console.print("[bold cyan]🧬 CodeDNA[/bold cyan] — AI tool fingerprint analysis running...\n")
+    console.print(
+        "[dim]⚠️  This detection is pattern-based estimation — not definitive.[/dim]\n"
+    )
+
+    with console.status("[dim]Analyzing files...[/dim]"):
+        results = compare_tools_in_repo(root, db_path)
+
+    if not results:
+        console.print("[yellow]No files found to analyze.[/yellow]")
+        return
+
+    table = Table(border_style="dim", show_lines=True, header_style="bold")
+    table.add_column("AI Tool", min_width=12)
+    table.add_column("File Count", justify="right", min_width=13)
+    table.add_column("Avg. AI Score", justify="right", min_width=13)
+    table.add_column("Avg. Understanding", justify="right", min_width=12)
+
+    tool_emojis = {
+        "copilot": "🐙", "cursor": "🖱️",
+        "claude": "🧠", "unknown": "❓",
+    }
+
+    for tool, data in sorted(results.items(), key=lambda x: -x[1].get("file_count", 0)):
+        emoji = tool_emojis.get(tool, "🤖")
+        understanding = (
+            f"{data['avg_understanding']:.1f}/5"
+            if data.get("avg_understanding") else "—"
+        )
+        table.add_row(
+            f"{emoji} {tool}",
+            str(data.get("file_count", 0)),  # type: ignore
+            f"%{data.get('avg_ai_probability', 0) * 100:.0f}",
+            understanding,
+        )
+
+    console.print(table)
+    console.print()
+
+
+# ---------------------------------------------------------------------------
+# codedna onboarding
+# ---------------------------------------------------------------------------
+@app.command()
+def onboarding(
+    author: Optional[str] = typer.Option(None, "--author", "-a", help="Single author analysis"),
+    team: bool = typer.Option(False, "--team", "-t", help="Team-wide summary"),
+    repo: Optional[Path] = typer.Option(None, "--repo", "-r", help="Git repo directory"),
+) -> None:
+    """Measure developer onboarding speed and show ramp-up curve."""
+    from codedna.onboarding import (
+        get_author_curve, team_onboarding_summary, get_all_authors,
+    )
+    from codedna.plan import is_feature_available
+
+    if not is_feature_available("sprint_health"):
+        console.print(
+            Panel(
+                "[bold yellow]🔒 This feature is available on Team plan.[/bold yellow]\n"
+                "[dim]To upgrade:[/dim] [cyan]codedna plan activate <LICENSE_KEY>[/cyan]",
+                border_style="yellow",
+            )
+        )
+        raise typer.Exit(1)
+
+    root = repo or find_git_root() or Path.cwd()
+    db_path = _get_db(root)
+    init_db(db_path)
+
+    console.print()
+
+    if team or not author:
+        # Team summary
+        console.print("[bold cyan]🧬 CodeDNA[/bold cyan] — Onboarding team summary\n")
+
+        with console.status("[dim]Analyzing...[/dim]"):
+            summary = team_onboarding_summary(db_path)
+
+        if not summary:
+            console.print("[yellow]No authors found.[/yellow]")
+            return
+
+        table = Table(
+            title="[bold cyan]🚀 Onboarding Summary[/bold cyan]",
+            border_style="dim",
+            show_lines=True,
+            header_style="bold",
+        )
+        table.add_column("Author", min_width=18)
+        table.add_column("Commits", justify="right", min_width=8)
+        table.add_column("Surveyed", justify="right", min_width=9)
+        table.add_column("Ramp-up", justify="center", min_width=12)
+        table.add_column("Latest Understanding", justify="center", min_width=12)
+
+        for y in summary:
+            ramp_str = (
+                f"{y['ramp_up_weeks']:.1f} weeks"
+                if y["ramp_up_weeks"] is not None
+                else ("[dim]Insufficient data[/dim]" if not y["sufficient_data"] else "[yellow]Threshold not reached[/yellow]")
+            )
+            understanding_str = (
+                f"{y['latest_avg_understanding']:.1f}/5" if y["latest_avg_understanding"] else "—"
+            )
+            table.add_row(
+                y["author"],
+                str(y["total_commits"]),
+                str(y["commits_with_understanding"]),
+                ramp_str,
+                understanding_str,
+            )
+
+        console.print(table)
+
+    else:
+        # Single author curve
+        console.print(f"[bold cyan]🧬 CodeDNA[/bold cyan] — [bold]{author}[/bold] onboarding curve\n")
+
+        with console.status("[dim]Analyzing...[/dim]"):
+            curve = get_author_curve(author, db_path)
+
+        if curve.total_commits == 0:
+            console.print(f"[yellow]No commits found for author '{author}'.[/yellow]")
+            return
+
+        # Ramp-up panel
+        ramp_str = (
+            f"[green]{curve.ramp_up_weeks:.1f} weeks[/green]"
+            if curve.ramp_up_weeks is not None
+            else "[yellow]Threshold not yet reached[/yellow]"
+            if curve.commits_with_understanding >= 5
+            else "[dim]Insufficient data (at least 5 commits needed)[/dim]"
+        )
+
+        understanding_str = (
+            f"{curve.latest_avg_understanding:.1f}/5" if curve.latest_avg_understanding else "—"
+        )
+
+        console.print(
+            Panel(
+                f"[bold]Author:[/bold] {curve.author}\n"
+                f"[bold]Total commits:[/bold] {curve.total_commits}\n"
+                f"[bold]Surveyed commits:[/bold] {curve.commits_with_understanding}\n"
+                f"[bold]Estimated ramp-up:[/bold] {ramp_str}\n"
+                f"[bold]Latest avg. understanding:[/bold] {understanding_str}",
+                title="[bold cyan]🚀 Onboarding Analysis[/bold cyan]",
+                border_style="cyan",
+                padding=(1, 2),
+            )
+        )
+
+        # Commit-based table (with survey data)
+        surveyed = [n for n in curve.points if n.understanding_score is not None]
+        if surveyed:
+            table = Table(border_style="dim", show_lines=True, header_style="bold")
+            table.add_column("#", justify="right", min_width=4)
+            table.add_column("Hash", style="dim", min_width=10)
+            table.add_column("Date", min_width=12)
+            table.add_column("Week", justify="right", min_width=7)
+            table.add_column("Understanding", justify="center", min_width=10)
+
+            for n in surveyed:
+                score = n.understanding_score or 0.0
+                color = "green" if score >= 4 else "yellow" if score >= 2.5 else "red"
+                table.add_row(
+                    str(n.commit_no),
+                    n.commit_hash[:8],
+                    n.date.strftime("%Y-%m-%d"),
+                    str(n.week_number),
+                    f"[{color}]{score:.1f}/5[/{color}]",
+                )
+            console.print(table)
+
+    console.print()
+
+
+# ---------------------------------------------------------------------------
+# codedna pr-comment
+# ---------------------------------------------------------------------------
+@app.command(name="pr-comment")
+def pr_comment(
+    repo: Optional[str] = typer.Option(None, "--repo", help="Repo in owner/repo format (defaults to GITHUB_REPOSITORY env var)"),
+    pr: Optional[int] = typer.Option(None, "--pr", help="PR number (auto-detected from event payload if omitted)"),
+    rate: float = typer.Option(75.0, "--rate", help="Hourly rate for technical debt"),
+) -> None:
+    """Post CodeDNA analysis comment to GitHub PR (updates existing comment, no spam)."""
+    import os
+    from codedna.integrations.github_bot import (
+        format_pr_comment, post_or_update_comment, github_actions_pr_bilgisi,
+    )
+    from codedna.tech_debt import calculate_repo_debt
+
+    # Token — never logged
+    token = os.environ.get("GITHUB_TOKEN")
+    if not token:
+        console.print(
+            "[bold red]Error:[/bold red] GITHUB_TOKEN environment variable is not set."
+        )
+        raise typer.Exit(1)
+
+    # Repo and PR number — parameter first, then GitHub Actions env
+    target_repo = repo
+    target_pr = pr
+
+    if not target_repo or not target_pr:
+        info = github_actions_pr_bilgisi()
+        if info:
+            auto_repo, auto_pr = info
+            target_repo = target_repo or auto_repo
+            target_pr = target_pr or auto_pr
+
+    if not target_repo or not target_pr:
+        console.print(
+            "[bold red]Error:[/bold red] Repo and PR number not found.\n"
+            "[dim]Specify with --repo owner/repo --pr 42 or run inside GitHub Actions.[/dim]"
+        )
+        raise typer.Exit(1)
+
+    root = find_git_root() or Path.cwd()
+    db_path = _get_db(root)
+    init_db(db_path)
+
+    console.print(f"\n[bold cyan]🧬 CodeDNA[/bold cyan] — Analyzing PR #{target_pr}...\n")
+
+    with console.status("[dim]Scanning files...[/dim]"):
+        from codedna.scorer import scan_repository
+        results = scan_repository(root, max_files=200)
+
+    debt_summary_dict: Optional[dict] = None
+    try:
+        debt = calculate_repo_debt(root, db_path, hourly_rate=rate)
+        debt_summary_dict = {
+            "total_debt_hours": debt.total_debt_hours,
+            "total_monthly_cost_usd": debt.total_monthly_cost_usd,
+        }
+    except Exception:
+        pass
+
+    comment = format_pr_comment(results, debt_summary_dict)
+
+    try:
+        result = post_or_update_comment(target_repo, target_pr, comment, token)
+        comment_url = result.get("html_url", "")
+        console.print(
+            f"[green]✓[/green] PR comment posted: [dim]{comment_url}[/dim]\n"
+        )
+    except RuntimeError as e:
+        console.print(f"[bold red]Error:[/bold red] GitHub API request failed: {e}")
+        raise typer.Exit(1)
+
+
+# ---------------------------------------------------------------------------
+# codedna protect
+# ---------------------------------------------------------------------------
+protect_app = typer.Typer(help="Protected module management.")
+app.add_typer(protect_app, name="protect")
+
+
+@protect_app.command("add")
+def protect_add(
+    file_path: str = typer.Argument(..., help="File path to protect"),
+    threshold: float = typer.Option(3.5, "--threshold", "-t", help="Minimum understanding score threshold"),
+    label: str = typer.Option("", "--label", "-l", help="Human-readable label"),
+    repo: Optional[Path] = typer.Option(None, "--repo", "-r", help="Git repo directory"),
+) -> None:
+    """Mark a file as protected module."""
+    from codedna.protection import protect_module
+    from codedna.plan import is_feature_available
+
+    if not is_feature_available("bus_factor"):
+        console.print("[bold yellow]🔒 This feature is available on Team plan.[/bold yellow]")
+        raise typer.Exit(1)
+
+    root = repo or find_git_root() or Path.cwd()
+    db_path = _get_db(root)
+    init_db(db_path)
+
+    # Convert relative path to absolute
+    full_path = str((root / file_path).resolve())
+    label = label or file_path
+    author = "cli"
+
+    record_id = protect_module(full_path, threshold, label, author, db_path)
+    console.print(
+        f"[green]✓[/green] Protected module added: [cyan]{file_path}[/cyan]\n"
+        f"  [dim]Label:[/dim] {label} · [dim]Threshold:[/dim] {threshold}/5 · [dim]ID:[/dim] #{record_id}"
+    )
+
+
+@protect_app.command("remove")
+def protect_remove(
+    file_path: str = typer.Argument(..., help="File path to unprotect"),
+    repo: Optional[Path] = typer.Option(None, "--repo", "-r", help="Git repo directory"),
+) -> None:
+    """Remove protection from a file."""
+    from codedna.protection import unprotect_module
+    from codedna.plan import is_feature_available
+
+    if not is_feature_available("bus_factor"):
+        console.print("[bold yellow]🔒 This feature is available on Team plan.[/bold yellow]")
+        raise typer.Exit(1)
+
+    root = repo or find_git_root() or Path.cwd()
+    db_path = _get_db(root)
+    full_path = str((root / file_path).resolve())
+
+    if unprotect_module(full_path, db_path):
+        console.print(f"[green]✓[/green] Protection removed: [cyan]{file_path}[/cyan]")
+    else:
+        console.print(f"[yellow]Not found:[/yellow] '{file_path}' is not in the protected modules list.")
+
+
+@protect_app.command("list")
+def protect_list(
+    repo: Optional[Path] = typer.Option(None, "--repo", "-r", help="Git repo directory"),
+) -> None:
+    """Show all protected modules and their statuses."""
+    from codedna.protection import check_protected_modules
+    from codedna.plan import is_feature_available
+
+    if not is_feature_available("bus_factor"):
+        console.print("[bold yellow]🔒 This feature is available on Team plan.[/bold yellow]")
+        raise typer.Exit(1)
+
+    root = repo or find_git_root() or Path.cwd()
+    db_path = _get_db(root)
+    init_db(db_path)
+
+    modules = check_protected_modules(db_path)
+    if not modules:
+        console.print("[yellow]No protected modules yet.[/yellow]")
+        console.print("[dim]To add one:[/dim] [cyan]codedna protect add <file> --label 'Label'[/cyan]")
+        return
+
+    table = Table(
+        title="[bold cyan]🛡️ Protected Modules[/bold cyan]",
+        border_style="dim", show_lines=True, header_style="bold",
+    )
+    table.add_column("File", min_width=30)
+    table.add_column("Label", min_width=16)
+    table.add_column("Threshold", justify="center", min_width=7)
+    table.add_column("Current", justify="center", min_width=9)
+    table.add_column("Status", justify="center", min_width=12)
+
+    for m in modules:
+        current_str = f"{m.current_score:.1f}" if m.current_score is not None else "—"
+        if m.status == "VIOLATION":
+            status_str = "[bold red]🔴 VIOLATION[/bold red]"
+        elif m.status == "SAFE":
+            status_str = "[green]✅ SAFE[/green]"
+        else:
+            status_str = "[dim]⚪ UNKNOWN[/dim]"
+
+        try:
+            rel_path = str(Path(m.file_path).relative_to(root))
+        except ValueError:
+            rel_path = m.file_path[-40:]
+
+        table.add_row(rel_path, m.label, f"{m.threshold:.1f}", current_str, status_str)
+
+    console.print()
+    console.print(table)
+    console.print()
+
+
+@protect_app.command("check")
+def protect_check(
+    repo: Optional[Path] = typer.Option(None, "--repo", "-r", help="Git repo directory"),
+) -> None:
+    """Show only modules that violated the threshold."""
+    from codedna.protection import get_violations
+    from codedna.plan import is_feature_available
+
+    if not is_feature_available("bus_factor"):
+        console.print("[bold yellow]🔒 This feature is available on Team plan.[/bold yellow]")
+        raise typer.Exit(1)
+
+    root = repo or find_git_root() or Path.cwd()
+    db_path = _get_db(root)
+    init_db(db_path)
+
+    violations = get_violations(db_path)
+    if not violations:
+        console.print("[green]✅ All protected modules are safe.[/green]")
+        return
+
+    console.print()
+    for violation in violations:
+        score_str = f"{violation.current_score:.1f}" if violation.current_score else "?"
+        try:
+            rel_path = str(Path(violation.file_path).relative_to(root))
+        except ValueError:
+            rel_path = violation.file_path
+        console.print(
+            f"[bold red]⚠️  VIOLATION:[/bold red] [cyan]{rel_path}[/cyan] — "
+            f"understanding: [red]{score_str}[/red] < threshold: [yellow]{violation.threshold:.1f}[/yellow] "
+            f"([dim]{violation.label}[/dim])"
+        )
+    console.print()
+
+
+# ---------------------------------------------------------------------------
+# codedna interview
+# ---------------------------------------------------------------------------
+interview_app = typer.Typer(help="Candidate interview tool.")
+app.add_typer(interview_app, name="interview")
+
+
+@interview_app.command("start")
+def interview_start(
+    candidate: str = typer.Option(..., "--candidate", "-c", help="Candidate name"),
+    difficulty: str = typer.Option("medium", "--difficulty", "-d", help="Difficulty: easy|medium|hard"),
+    repo: Optional[Path] = typer.Option(None, "--repo", "-r", help="Git repo directory"),
+) -> None:
+    """Start new interview session and show anonymized code."""
+    from codedna.interview import select_candidate_file, generate_questions, start_session
+    from codedna.plan import is_feature_available
+
+    if not is_feature_available("interview_tool"):
+        console.print(
+            Panel(
+                "[bold yellow]🔒 This feature is available on Enterprise plan.[/bold yellow]\n"
+                "[dim]To upgrade:[/dim] [cyan]codedna plan activate <LICENSE_KEY>[/cyan]",
+                border_style="yellow",
+            )
+        )
+        raise typer.Exit(1)
+
+    root = repo or find_git_root() or Path.cwd()
+    db_path = _get_db(root)
+    init_db(db_path)
+
+    console.print()
+    console.print(
+        "[dim]⚠️  This tool does NOT replace human evaluation — it is a supplementary signal.[/dim]\n"
+    )
+
+    with console.status("[dim]Selecting a suitable file...[/dim]"):
+        file = select_candidate_file(root, db_path, difficulty)
+
+    if not file:
+        console.print(f"[yellow]No suitable file found for difficulty '{difficulty}'.[/yellow]")
+        raise typer.Exit(1)
+
+    questions = generate_questions(file.anonymized_code)
+    session_id = start_session(candidate, file.file_path, questions, db_path)
+
+    console.print(
+        Panel(
+            f"[bold]Candidate:[/bold] {candidate}\n"
+            f"[bold]Difficulty:[/bold] {difficulty} · [dim]Complexity:[/dim] {file.complexity_score:.0f} · [dim]Lines:[/dim] {file.line_count}\n"
+            f"[bold]Session ID:[/bold] [cyan]#{session_id}[/cyan]",
+            title="[bold cyan]🎯 Interview Started[/bold cyan]",
+            border_style="cyan",
+            padding=(1, 2),
+        )
+    )
+
+    console.print("\n[bold]─── Anonymized Code ───[/bold]")
+    console.print(f"[dim]{file.anonymized_code[:800]}[/dim]")
+    if len(file.anonymized_code) > 800:
+        console.print("[dim]... (truncated)[/dim]")
+
+    console.print("\n[bold]─── Questions ───[/bold]")
+    for i, question in enumerate(questions, 1):
+        console.print(f"  [bold cyan]{i}.[/bold cyan] {question}")
+
+    console.print(
+        f"\n[dim]To score:[/dim] [cyan]codedna interview score {session_id} --score 4.0 --notes 'Note'[/cyan]\n"
+    )
+
+
+@interview_app.command("list")
+def interview_list(
+    repo: Optional[Path] = typer.Option(None, "--repo", "-r", help="Git repo directory"),
+    limit: int = typer.Option(10, "--limit", "-n", help="Number of sessions to show"),
+) -> None:
+    """Show historical interview sessions."""
+    from codedna.interview import get_sessions
+    from codedna.plan import is_feature_available
+
+    if not is_feature_available("interview_tool"):
+        console.print("[bold yellow]🔒 This feature is available on Enterprise plan.[/bold yellow]")
+        raise typer.Exit(1)
+
+    root = repo or find_git_root() or Path.cwd()
+    db_path = _get_db(root)
+    init_db(db_path)
+
+    sessions = get_sessions(db_path, limit=limit)
+    if not sessions:
+        console.print("[yellow]No interview sessions yet.[/yellow]")
+        return
+
+    table = Table(
+        title="[bold cyan]🎯 Interview History[/bold cyan]",
+        border_style="dim", show_lines=True, header_style="bold",
+    )
+    table.add_column("#", justify="right", min_width=4)
+    table.add_column("Candidate", min_width=16)
+    table.add_column("Start Time", min_width=17)
+    table.add_column("Score", justify="center", min_width=8)
+    table.add_column("Notes", min_width=20)
+
+    for o in sessions:
+        score_str = f"{o['score']:.1f}/5" if o["score"] is not None else "[dim]—[/dim]"
+        table.add_row(
+            str(o["id"]),
+            o["candidate"] or "?",
+            o["start_time"] or "?",
+            score_str,
+            (o["notes"] or "")[:30],
+        )
+
+    console.print()
+    console.print(table)
+    console.print()
+
+
+@interview_app.command("score")
+def interview_score(
+    session_id: int = typer.Argument(..., help="Session ID"),
+    score: float = typer.Option(..., "--score", "-s", help="Score between 0.0 and 5.0"),
+    notes: str = typer.Option("", "--notes", "-n", help="Evaluator notes"),
+    repo: Optional[Path] = typer.Option(None, "--repo", "-r", help="Git repo directory"),
+) -> None:
+    """Add a human review score to an interview session."""
+    from codedna.interview import submit_score
+    from codedna.plan import is_feature_available
+
+    if not is_feature_available("interview_tool"):
+        console.print("[bold yellow]🔒 This feature is available on Enterprise plan.[/bold yellow]")
+        raise typer.Exit(1)
+
+    root = repo or find_git_root() or Path.cwd()
+    db_path = _get_db(root)
+
+    try:
+        result = submit_score(session_id, score, notes, db_path)
+        console.print(
+            f"[green]✓[/green] Evaluation saved: "
+            f"Session [cyan]#{session_id}[/cyan] → [bold]{score:.1f}/5[/bold]"
+        )
+        if notes:
+            console.print(f"  [dim]Note:[/dim] {notes}")
+    except ValueError as e:
+        console.print(f"[bold red]Error:[/bold red] {e}")
+        raise typer.Exit(1)
+
+
+# ---------------------------------------------------------------------------
+# codedna bus-factor
+# ---------------------------------------------------------------------------
+@app.command(name="bus-factor")
+def bus_factor(
+    repo: Optional[Path] = typer.Option(None, "--repo", "-r", help="Git repo directory"),
+    critical: bool = typer.Option(False, "--critical", "-c", help="Show only critical files (bus_factor=1)"),
+    max_files: int = typer.Option(500, "--max", "-m", help="Maximum number of files to process"),
+) -> None:
+    """Run repo-wide bus factor analysis and show critical ownership risks."""
+    from codedna.bus_factor import calculate_bus_factor, get_at_risk_files, _LARGE_REPO_THRESHOLD
+    from codedna.plan import is_feature_available
+
+    # Plan check
+    if not is_feature_available("bus_factor"):
+        console.print(
+            Panel(
+                "[bold yellow]🔒 This feature is available on Team plan.[/bold yellow]\n\n"
+                "[dim]To upgrade:[/dim] [cyan]codedna plan activate <LICENSE_KEY>[/cyan]",
+                border_style="yellow",
+                padding=(1, 2),
+            )
+        )
+        raise typer.Exit(1)
+
+    root = repo or find_git_root() or Path.cwd()
+    db_path = _get_db(root)
+    init_db(db_path)
+
+    if max_files > _LARGE_REPO_THRESHOLD:
+        console.print(
+            f"[yellow]⚠[/yellow]  {max_files} files will be scanned — may be slow for large repos."
+        )
+
+    console.print()
+    console.print("[bold cyan]🧬 CodeDNA[/bold cyan] — Bus Factor analysis running...\n")
+
+    with console.status("[dim]Running git blame...[/dim]"):
+        if critical:
+            results = get_at_risk_files(root, db_path)
+        else:
+            results = calculate_bus_factor(root, db_path, max_files=max_files)
+
+    if not results:
+        console.print("[yellow]No files found to analyze.[/yellow]")
+        return
+
+    # Table
+    table = Table(
+        title="",
+        border_style="dim",
+        show_lines=True,
+        header_style="bold",
+    )
+    table.add_column("File", style="white", min_width=30)
+    table.add_column("Bus Factor", justify="center", min_width=11)
+    table.add_column("Primary Owner", min_width=16)
+    table.add_column("Ownership %", justify="right", min_width=11)
+    table.add_column("Risk", justify="center", min_width=10)
+
+    critical_count = 0
+    for s in results:
+        bf_str = str(s.bus_factor)
+        if s.risk == "CRITICAL":
+            bf_display = f"[red]🚌 {bf_str}[/red]"
+            risk_display = "[bold red]CRITICAL[/bold red]"
+            critical_count += 1
+        elif s.risk == "RISKY":
+            bf_display = f"[yellow]🚌 {bf_str}[/yellow]"
+            risk_display = "[yellow]RISKY[/yellow]"
+        else:
+            bf_display = f"[green]🚌 {bf_str}[/green]"
+            risk_display = "[green]SAFE[/green]"
+
+        table.add_row(
+            s.file_path,
+            bf_display,
+            s.primary_owner or "?",
+            f"%{s.ownership_percentage:.1f}",
+            risk_display,
+        )
+
+    console.print(table)
+    console.print(
+        f"\n[bold]Summary:[/bold] {len(results)} files · "
+        f"[red]{critical_count} critical[/red] · "
+        f"[dim]Threshold: understanding score ≥ 3.5[/dim]\n"
+    )
+
+
+# ---------------------------------------------------------------------------
+# codedna debt
+# ---------------------------------------------------------------------------
+@app.command()
+def debt(
+    repo: Optional[Path] = typer.Option(None, "--repo", "-r", help="Git repo directory"),
+    rate: float = typer.Option(75.0, "--rate", help="Hourly rate ($/hour)"),
+    file: Optional[Path] = typer.Option(None, "--file", "-f", help="Single file analysis"),
+) -> None:
+    """Calculate repo-wide technical debt cost."""
+    from codedna.tech_debt import calculate_repo_debt, calculate_file_debt
+    from codedna.plan import get_current_plan, Plan
+
+    root = repo or find_git_root() or Path.cwd()
+    db_path = _get_db(root)
+    init_db(db_path)
+
+    current_plan = get_current_plan()
+    dollar_hidden = current_plan == Plan.FREE  # Dollar amounts hidden on Free plan
+
+    console.print()
+    console.print("[bold cyan]🧬 CodeDNA[/bold cyan] — Calculating technical debt...\n")
+
+    # Single file mode
+    if file:
+        # Convert relative path to absolute
+        full_file = (root / file).resolve() if not file.is_absolute() else file
+        with console.status("[dim]Analyzing...[/dim]"):
+            debt = calculate_file_debt(str(full_file), db_path, hourly_rate=rate)
+
+        if not debt:
+            console.print(f"[yellow]Warning:[/yellow] No data found for '{file}'.")
+            return
+
+        risk_color = {"CRITICAL": "red", "HIGH": "yellow", "MEDIUM": "yellow", "LOW": "green"}.get(
+            debt.risk_level, "white"
+        )
+        cost_str = (
+            f"[dim]Pro+ plan required[/dim]"
+            if dollar_hidden
+            else f"[bold green]${debt.monthly_cost_usd:.2f}/month[/bold green]"
+        )
+
+        console.print(
+            Panel(
+                f"[bold]File:[/bold] [dim]{debt.file_path}[/dim]\n"
+                f"[bold]Debt hours:[/bold] {debt.debt_hours:.1f} hours\n"
+                f"[bold]Monthly cost:[/bold] {cost_str}\n"
+                f"[bold]Risk:[/bold] [{risk_color}]{debt.risk_level}[/{risk_color}]\n"
+                f"[bold]AI probability:[/bold] %{debt.ai_probability*100:.0f} · "
+                f"[bold]Complexity:[/bold] {debt.complexity:.0f} · "
+                f"[bold]Lines:[/bold] {debt.total_lines}",
+                title="[bold cyan]💰 Technical Debt — File Detail[/bold cyan]",
+                border_style="cyan",
+                padding=(1, 2),
+            )
+        )
+        return
+
+    # Repo-wide mode
+    with console.status("[dim]Analyzing all files...[/dim]"):
+        summary = calculate_repo_debt(root, db_path, hourly_rate=rate)
+
+    cost_str = (
+        "[dim]🔒 Pro+ plan required[/dim]"
+        if dollar_hidden
+        else f"[bold green]${summary.total_monthly_cost_usd:.2f}/month[/bold green]"
+    )
+
+    console.print(
+        Panel(
+            f"[bold]💰 Technical Debt Summary[/bold]\n\n"
+            f"[bold]Total estimated debt:[/bold] [cyan]{summary.total_debt_hours:.1f} hours[/cyan]\n"
+            f"[bold]Monthly cost:[/bold] {cost_str}\n"
+            f"[bold]Hourly rate:[/bold] [dim]${rate:.0f}/hour[/dim]\n"
+            f"[bold]Files analyzed:[/bold] {summary.total_files}",
+            border_style="cyan",
+            padding=(1, 2),
+        )
+    )
+
+    if summary.top_5_most_expensive:
+        console.print("[bold]Top 5 most expensive files:[/bold]")
+        table = Table(border_style="dim", show_lines=True, header_style="bold")
+        table.add_column("File", style="white", min_width=30)
+        table.add_column("Debt Hours", justify="right", min_width=11)
+        table.add_column("Monthly", justify="right", min_width=10)
+        table.add_column("Risk", justify="center", min_width=10)
+
+        for d in summary.top_5_most_expensive:
+            risk_color = {
+                "CRITICAL": "red", "HIGH": "yellow", "MEDIUM": "yellow", "LOW": "green",
+            }.get(d.risk_level, "white")
+
+            monthly = (
+                "[dim]hidden[/dim]"
+                if dollar_hidden
+                else f"[{risk_color}]${d.monthly_cost_usd:.2f}[/{risk_color}]"
+            )
+
+            # Shorten file path
+            try:
+                rel_path = str(Path(d.file_path).relative_to(root))
+            except ValueError:
+                rel_path = d.file_path[-40:]
+
+            table.add_row(
+                rel_path,
+                f"{d.debt_hours:.1f} h",
+                monthly,
+                f"[{risk_color}]{d.risk_level}[/{risk_color}]",
+            )
+        console.print(table)
+
+    if dollar_hidden:
+        console.print(
+            "\n[dim]💡 Dollar amounts are visible on Pro+: [cyan]codedna plan activate <KEY>[/cyan][/dim]\n"
+        )
+    else:
+        console.print()
+
+
+# ---------------------------------------------------------------------------
+# codedna sprint
+# ---------------------------------------------------------------------------
+sprint_app = typer.Typer(help="Sprint management and health score.")
+app.add_typer(sprint_app, name="sprint")
+
+
+@sprint_app.command("create")
+def sprint_create(
+    name: str = typer.Option(..., "--name", "-n", help="Sprint name"),
+    start: str = typer.Option(..., "--start", "-s", help="Start date (YYYY-MM-DD)"),
+    end: str = typer.Option(..., "--end", "-e", help="End date (YYYY-MM-DD)"),
+    repo: Optional[Path] = typer.Option(None, "--repo", "-r", help="Git repo directory"),
+) -> None:
+    """Create a new sprint and calculate the health score."""
+    from datetime import datetime as dt
+    from codedna.sprint_health import calculate_sprint_health, save_sprint_result
+    from codedna.plan import is_feature_available
+
+    if not is_feature_available("sprint_health"):
+        console.print(
+            Panel(
+                "[bold yellow]🔒 This feature is available on Team plan.[/bold yellow]\n\n"
+                "[dim]To upgrade:[/dim] [cyan]codedna plan activate <LICENSE_KEY>[/cyan]",
+                border_style="yellow",
+                padding=(1, 2),
+            )
+        )
+        raise typer.Exit(1)
+
+    # Parse dates
+    try:
+        start_date = dt.fromisoformat(start)
+        end_date = dt.fromisoformat(end)
+    except ValueError:
+        console.print(f"[bold red]Error:[/bold red] Invalid date format. Usage: YYYY-MM-DD")
+        raise typer.Exit(1)
+
+    if end_date <= start_date:
+        console.print("[bold red]Error:[/bold red] End date must be after start date.")
+        raise typer.Exit(1)
+
+    root = repo or find_git_root() or Path.cwd()
+    db_path = _get_db(root)
+    init_db(db_path)
+
+    console.print()
+    console.print(f"[bold cyan]🧬 CodeDNA[/bold cyan] — [bold]{name}[/bold] sprint analysis running...\n")
+
+    with console.status("[dim]Analyzing commits...[/dim]"):
+        result = calculate_sprint_health(root, db_path, start_date, end_date, name)
+
+    sprint_id = save_sprint_result(result, db_path)
+
+    status_color = {
+        "HEALTHY": "green", "WARNING": "yellow", "RISKY": "red",
+    }.get(result.status, "white")
+
+    console.print(
+        Panel(
+            f"[bold]Sprint:[/bold] {result.sprint_name}\n"
+            f"[bold]Date:[/bold] {start} → {end}\n"
+            f"[bold]Health Score:[/bold] [{status_color}]{result.health_score:.1f}/100 ({result.status})[/{status_color}]\n"
+            f"[bold]Total Commits:[/bold] {result.total_commits}\n"
+            f"[bold]Avg. Understanding:[/bold] {f'{result.avg_understanding:.1f}/5' if result.avg_understanding else 'No data'}\n"
+            f"[bold]AI Ratio:[/bold] {result.ai_ratio * 100:.0f}% high risk\n"
+            f"[bold]Debt Delta:[/bold] {result.debt_delta_hours:.1f} h/commit",
+            title=f"[bold cyan]🏃 Sprint Health Report — #{sprint_id}[/bold cyan]",
+            border_style=status_color,
+            padding=(1, 2),
+        )
+    )
+    console.print(f"[dim]Sprint #{sprint_id} saved.[/dim]\n")
+
+
+@sprint_app.command("health")
+def sprint_health(
+    repo: Optional[Path] = typer.Option(None, "--repo", "-r", help="Git repo directory"),
+) -> None:
+    """Show the latest sprint health score."""
+    from codedna.db import get_latest_sprint
+    from codedna.plan import is_feature_available
+
+    if not is_feature_available("sprint_health"):
+        console.print(
+            Panel(
+                "[bold yellow]🔒 This feature is available on Team plan.[/bold yellow]\n"
+                "[dim]To upgrade:[/dim] [cyan]codedna plan activate <LICENSE_KEY>[/cyan]",
+                border_style="yellow",
+            )
+        )
+        raise typer.Exit(1)
+
+    root = repo or find_git_root() or Path.cwd()
+    db_path = _get_db(root)
+    init_db(db_path)
+
+    sprint = get_latest_sprint(db_path=db_path)
+    if not sprint:
+        console.print("[yellow]No sprints recorded yet.[/yellow]")
+        console.print("[dim]To create one:[/dim] [cyan]codedna sprint create --name 'Sprint 1' --start 2026-06-01 --end 2026-06-14[/cyan]")
+        return
+
+    score = sprint["health_score"] or 0.0
+    status = "HEALTHY" if score >= 80 else "WARNING" if score >= 50 else "RISKY"
+    status_color = {"HEALTHY": "green", "WARNING": "yellow", "RISKY": "red"}[status]
+
+    from datetime import datetime as dt
+    start_str = dt.fromtimestamp(sprint["start_date"]).strftime("%Y-%m-%d") if sprint["start_date"] else "?"
+    end_str = dt.fromtimestamp(sprint["end_date"]).strftime("%Y-%m-%d") if sprint["end_date"] else "?"
+
+    understanding_val = sprint["avg_understanding"]
+    understanding_str = f"{understanding_val:.1f}/5" if understanding_val else "No data"
+    delta_val = sprint["debt_delta_hours"] or 0.0
+
+    console.print()
+    console.print(
+        Panel(
+            f"[bold]Sprint:[/bold] {sprint['sprint_name']}\n"
+            f"[bold]Date:[/bold] {start_str} → {end_str}\n"
+            f"[bold]Health Score:[/bold] [{status_color}]{score:.1f}/100 ({status})[/{status_color}]\n"
+            f"[bold]Avg. Understanding:[/bold] {understanding_str}\n"
+            f"[bold]Debt Delta:[/bold] {delta_val:.1f} h/commit",
+            title="[bold cyan]🏃 Latest Sprint Health[/bold cyan]",
+            border_style=status_color,
+            padding=(1, 2),
+        )
+    )
+
+
+@sprint_app.command("history")
+def sprint_history(
+    repo: Optional[Path] = typer.Option(None, "--repo", "-r", help="Git repo directory"),
+    limit: int = typer.Option(10, "--limit", "-n", help="Number of sprints to show"),
+) -> None:
+    """Show past sprints as a table."""
+    from codedna.db import get_sprint_history as db_sprint_history
+    from codedna.plan import is_feature_available
+    from datetime import datetime as dt
+
+    if not is_feature_available("sprint_health"):
+        console.print("[bold yellow]🔒 This feature is available on Team plan.[/bold yellow]")
+        raise typer.Exit(1)
+
+    root = repo or find_git_root() or Path.cwd()
+    db_path = _get_db(root)
+    init_db(db_path)
+
+    sprints = db_sprint_history(limit=limit, db_path=db_path)
+    if not sprints:
+        console.print("[yellow]No sprints recorded yet.[/yellow]")
+        return
+
+    table = Table(
+        title=f"[bold cyan]🏃 Sprint History — Last {len(sprints)}[/bold cyan]",
+        border_style="dim",
+        show_lines=True,
+        header_style="bold",
+    )
+    table.add_column("Sprint", min_width=16)
+    table.add_column("Date Range", min_width=22)
+    table.add_column("Health", justify="center", min_width=14)
+    table.add_column("Understanding", justify="center", min_width=10)
+    table.add_column("Debt Delta", justify="right", min_width=11)
+
+    for s in sprints:
+        score = s["health_score"] or 0.0
+        status = "HEALTHY" if score >= 80 else "WARNING" if score >= 50 else "RISKY"
+        color = {"HEALTHY": "green", "WARNING": "yellow", "RISKY": "red"}[status]
+
+        start_str = dt.fromtimestamp(s["start_date"]).strftime("%Y-%m-%d") if s["start_date"] else "?"
+        end_str = dt.fromtimestamp(s["end_date"]).strftime("%Y-%m-%d") if s["end_date"] else "?"
+
+        understanding_str = f"{s['avg_understanding']:.1f}/5" if s["avg_understanding"] else "—"
+        delta_str = f"{s['debt_delta_hours']:.1f}h" if s["debt_delta_hours"] else "—"
+
+        table.add_row(
+            s["sprint_name"] or "?",
+            f"{start_str} → {end_str}",
+            f"[{color}]{score:.0f}/100 {status}[/{color}]",
+            understanding_str,
+            delta_str,
+        )
+
+    console.print()
+    console.print(table)
+    console.print()
+
+
+# ---------------------------------------------------------------------------
+# codedna plan
+# ---------------------------------------------------------------------------
+@app.command()
+def plan(
+    command: Optional[str] = typer.Argument(
+        None,
+        help="'activate' or direct license key",
+    ),
+    key: Optional[str] = typer.Argument(
+        None,
+        help="License key (used with activate)",
+    ),
+) -> None:
+    """Show current plan or activate a plan with a license key.
+
+    Usage:
+      codedna plan                       # show current plan
+      codedna plan activate <KEY>        # activate license
+      codedna plan <KEY>                 # shortcut
+    """
+    from codedna.plan import (
+        Plan as PlanEnum,
+        get_current_plan,
+        activate_license,
+        get_plan_limits,
+    )
+
+    # Support "activate <KEY>" or direct "<KEY>" syntax
+    license_key: Optional[str] = None
+    if command == "activate" and key:
+        license_key = key
+    elif command and command != "activate":
+        license_key = command
+
+    if license_key:
+        # Activate license
+        try:
+            activated_plan = activate_license(license_key)
+            console.print(
+                Panel(
+                    f"[bold green]✓ License activated![/bold green]\n\n"
+                    f"[bold]Plan:[/bold] [cyan]{activated_plan.value.upper()}[/cyan]\n"
+                    f"[bold]Key:[/bold] [dim]{license_key[:12]}...[/dim]",
+                    border_style="green",
+                    padding=(1, 2),
+                )
+            )
+        except ValueError as e:
+            console.print(f"[bold red]Error:[/bold red] {e}")
+            raise typer.Exit(1)
+        return
+
+    # Show current plan
+    current = get_current_plan()
+    limits = get_plan_limits()
+
+    plan_color = {
+        PlanEnum.FREE: "dim",
+        PlanEnum.PRO: "cyan",
+        PlanEnum.TEAM: "green",
+        PlanEnum.ENTERPRISE: "yellow",
+    }.get(current, "white")
+
+    table = Table(border_style="dim", show_header=False, padding=(0, 1))
+    table.add_column("Feature", style="dim")
+    table.add_column("Value", style="white")
+
+    for k, v in limits.items():
+        if isinstance(v, bool):
+            display = "[green]✓[/green]" if v else "[red]✗[/red]"
+        elif isinstance(v, int) and v == -1:
+            display = "[dim]Unlimited[/dim]"
+        else:
+            display = str(v)
+        table.add_row(k.replace("_", " ").title(), display)
+
+    console.print()
+    console.print(
+        Panel(
+            f"[bold]Current Plan:[/bold] [{plan_color}]{current.value.upper()}[/{plan_color}]\n\n"
+            + (
+                "[dim]To activate a license:[/dim] [cyan]codedna plan activate <LICENSE_KEY>[/cyan]"
+                if current == PlanEnum.FREE
+                else "[dim]To upgrade:[/dim] [cyan]codedna plan activate <LICENSE_KEY>[/cyan]"
+            ),
+            title="[bold cyan]🧬 CodeDNA Plan[/bold cyan]",
+            border_style="cyan",
+            padding=(1, 2),
+        )
+    )
+    console.print(table)
+    console.print()
+
+
+# ---------------------------------------------------------------------------
+# codedna dashboard
+# ---------------------------------------------------------------------------
+@app.command()
+def dashboard(
+    api_port: int = typer.Option(8000, "--api-port", help="FastAPI port number"),
+    ui_port: int = typer.Option(3000, "--ui-port", help="Next.js dashboard port number"),
+    repo: Optional[Path] = typer.Option(None, "--repo", "-r", help="Git repo directory"),
+) -> None:
+    """Start FastAPI + Next.js dashboard and open in browser."""
+    import os
+    import subprocess
+    import time
+    import webbrowser
+
+    root = repo or find_git_root() or Path.cwd()
+    db_path = _get_db(root)
+    init_db(db_path)
+
+    # Find the dashboard/ folder — relative to CLI location or CWD
+    dashboard_paths = [
+        Path(__file__).parent.parent / "dashboard",
+        Path.cwd() / "dashboard",
+        root / "dashboard",
+    ]
+    dashboard_root = next((p for p in dashboard_paths if (p / "package.json").exists()), None)
+
+    if not dashboard_root:
+        console.print(
+            "[bold red]Error:[/bold red] dashboard/ folder not found.\n"
+            "[dim]A 'dashboard/' folder must exist in the codedna project root.[/dim]"
+        )
+        raise typer.Exit(1)
+
+    console.print()
+    console.print(
+        Panel(
+            f"[bold cyan]🧬 CodeDNA Dashboard[/bold cyan] starting...\n\n"
+            f"[bold]API:[/bold]       [link]http://localhost:{api_port}[/link]\n"
+            f"[bold]Dashboard:[/bold] [link]http://localhost:{ui_port}[/link]\n\n"
+            "[dim]Press Ctrl+C to stop[/dim]",
+            border_style="cyan",
+            padding=(1, 2),
+        )
+    )
+
+    # Set environment variables
+    env = os.environ.copy()
+    env["CODEDNA_REPO_PATH"] = str(root)
+    env["CODEDNA_DB_PATH"] = str(db_path)
+    env["NEXT_PUBLIC_API_URL"] = f"http://localhost:{api_port}"
+
+    # Start FastAPI process — use venv Python
+    import sys
+    python_bin = sys.executable
+
+    api_proc = subprocess.Popen(
+        [
+            python_bin, "-m", "uvicorn",
+            "codedna.api:app",
+            "--host", "127.0.0.1",
+            "--port", str(api_port),
+        ],
+        env=env,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+    # Auto-install npm dependencies if missing
+    if not (dashboard_root / "node_modules" / "next").exists():
+        console.print("[dim]⏳ Installing dashboard dependencies...[/dim]")
+        install_proc = subprocess.Popen(
+            ["npm", "install"],
+            cwd=str(dashboard_root),
+            env=env,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+        )
+        install_proc.wait()
+        if install_proc.returncode != 0:
+            console.print("[bold red]Error:[/bold red] npm install failed.")
+            raise typer.Exit(1)
+
+    # Auto-build if production build missing
+    if not (dashboard_root / ".next" / "BUILD_ID").exists():
+        console.print("[dim]⏳ Building dashboard for production...[/dim]")
+        build_proc = subprocess.Popen(
+            ["npm", "run", "build"],
+            cwd=str(dashboard_root),
+            env=env,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+        )
+        build_proc.wait()
+        if build_proc.returncode != 0:
+            console.print("[bold red]Error:[/bold red] Dashboard build failed.")
+            raise typer.Exit(1)
+
+    # Start Next.js in production mode
+    next_bin = dashboard_root / "node_modules" / ".bin" / "next"
+    ui_proc = subprocess.Popen(
+        [str(next_bin), "start", "--port", str(ui_port)],
+        cwd=str(dashboard_root),
+        env=env,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+    # Wait for startup, then open browser
+    console.print("[dim]Starting servers...[/dim]")
+    time.sleep(4)
+
+    try:
+        webbrowser.open(f"http://localhost:{ui_port}")
+        console.print(f"[green]✓[/green] Browser opened: [link]http://localhost:{ui_port}[/link]")
+        console.print("[dim]Press Ctrl+C to stop[/dim]\n")
+
+        # Wait for both processes
+        api_proc.wait()
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Shutting down...[/yellow]")
+    finally:
+        # Clean up both processes
+        for proc in [api_proc, ui_proc]:
+            try:
+                proc.terminate()
+                proc.wait(timeout=3)
+            except Exception:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+        console.print("[dim]CodeDNA stopped.[/dim]")
+
+
+# ---------------------------------------------------------------------------
+# codedna uninstall (bonus)
+# ---------------------------------------------------------------------------
+@app.command()
+def uninstall(
+    repo: Optional[Path] = typer.Option(None, "--repo", "-r", help="Git repo directory"),
+) -> None:
+    """Remove CodeDNA hook."""
+    root = repo or find_git_root()
+    if uninstall_hook(root):
+        console.print("[green]✓[/green] CodeDNA hook removed.")
+    else:
+        raise typer.Exit(1)
+
+
+# ---------------------------------------------------------------------------
+# codedna doctor (system health check)
+# ---------------------------------------------------------------------------
+@app.command()
+def doctor(
+    fix: bool = typer.Option(False, "--fix", help="Attempt to auto-fix detected issues"),
+    repo: Optional[Path] = typer.Option(None, "--repo", "-r", help="Git repo directory"),
+) -> None:
+    """Run a system health check (Python, Git, tree-sitter, DB, hook, API, network)."""
+    import subprocess
+    from collections import Counter
+
+    console.print()
+    console.print("[bold cyan]🧬 CodeDNA[/bold cyan] — System health check running...\n")
+
+    issues: list[str] = []
+    warnings: list[str] = []
+
+    def _ok(msg: str) -> None:
+        console.print(f"  [green]✓[/green] {msg}")
+
+    def _warn(msg: str) -> None:
+        console.print(f"  [yellow]⚠[/yellow]  {msg}")
+
+    def _fail(msg: str) -> None:
+        console.print(f"  [red]✗[/red] {msg}")
+
+    with console.status("[dim]Running tests...[/dim]"):
+        # ── 1. Python Environment ──────────────────────────────────────
+        console.print("[bold]─── Python Environment ───[/bold]")
+        py_ver = sys.version_info
+        if py_ver >= (3, 10):
+            _ok(f"Python {py_ver.major}.{py_ver.minor}.{py_ver.micro} (≥ 3.10 required)")
+        else:
+            _fail(f"Python {py_ver.major}.{py_ver.minor}.{py_ver.micro} — 3.10+ required")
+            issues.append("python_version")
+
+        try:
+            import codedna
+            _ok(f"CodeDNA [bold]v{codedna.__version__}[/bold] — {Path(codedna.__file__).parent}")
+        except Exception as e:
+            _fail(f"CodeDNA import failed: {e}")
+            issues.append("codedna_import")
+        console.print()
+
+        # ── 2. Git Integration ─────────────────────────────────────────
+        console.print("[bold]─── Git Integration ───[/bold]")
+        try:
+            result = subprocess.run(["git", "--version"], capture_output=True, text=True, timeout=5)
+            if result.returncode == 0:
+                _ok(f"Git: {result.stdout.strip()}")
+            else:
+                _fail("Git command returned non-zero")
+                issues.append("git")
+        except FileNotFoundError:
+            _fail("Git not found on PATH")
+            issues.append("git")
+        except Exception as e:
+            _warn(f"Git check failed: {e}")
+            warnings.append("git_check")
+        console.print()
+
+        # ── 3. Tree-sitter Parsers ─────────────────────────────────────
+        console.print("[bold]─── Tree-sitter Parsers ───[/bold]")
+        parsers = [
+            ("tree_sitter", "tree-sitter"),
+            ("tree_sitter_python", "tree-sitter-python"),
+            ("tree_sitter_javascript", "tree-sitter-javascript"),
+            ("tree_sitter_typescript", "tree-sitter-typescript"),
+        ]
+        for mod_name, pkg_name in parsers:
+            try:
+                __import__(mod_name)
+                _ok(pkg_name)
+            except ImportError:
+                _fail(f"{pkg_name} — not installed")
+                issues.append(f"missing:{pkg_name}")
+        console.print()
+
+        # ── 4. Local Database ──────────────────────────────────────────
+        console.print("[bold]─── Local Database ───[/bold]")
+        try:
+            root = repo or find_git_root()
+            db_path = get_db_path(root)
+            if db_path.exists():
+                size_kb = db_path.stat().st_size / 1024
+                _ok(f"Database: {db_path} ({size_kb:.1f} KB)")
+            else:
+                _warn(f"No database at {db_path} (run [cyan]codedna init[/cyan] to create)")
+                warnings.append("no_db")
+                if fix:
+                    try:
+                        init_db(db_path)
+                        _ok("Database created (auto-fixed)")
+                    except Exception as e:
+                        _fail(f"Database creation failed: {e}")
+                        issues.append("db_init_failed")
+        except Exception:
+            _warn("Not in a git repo — database check skipped")
+        console.print()
+
+        # ── 5. Git Hook ────────────────────────────────────────────────
+        console.print("[bold]─── Git Hook ───[/bold]")
+        try:
+            root = repo or find_git_root()
+            if is_hook_installed(root):
+                _ok("Post-commit hook installed")
+            else:
+                _warn(f"Post-commit hook not installed (run [cyan]codedna init[/cyan])")
+                warnings.append("no_hook")
+                if fix:
+                    try:
+                        install_hook(root)
+                        _ok("Hook installed (auto-fixed)")
+                    except Exception as e:
+                        _fail(f"Hook install failed: {e}")
+                        issues.append("hook_install_failed")
+        except Exception:
+            _warn("Not in a git repo — hook check skipped")
+        console.print()
+
+        # ── 6. Core Dependencies ───────────────────────────────────────
+        console.print("[bold]─── Core Dependencies ───[/bold]")
+        deps = [
+            ("typer", "CLI framework"),
+            ("rich", "Terminal UI"),
+            ("git", "Git integration"),
+            ("fastapi", "REST API"),
+            ("uvicorn", "ASGI server"),
+            ("pydantic", "Data validation"),
+            ("jwt", "JWT auth"),
+            ("bcrypt", "Password hashing"),
+        ]
+        for mod_name, desc in deps:
+            try:
+                m = __import__(mod_name)
+                ver = getattr(m, "__version__", "?")
+                _ok(f"{mod_name} [dim]{ver}[/dim] — {desc}")
+            except ImportError:
+                _fail(f"{mod_name} — not installed ({desc})")
+                issues.append(f"missing:{mod_name}")
+        console.print()
+
+        # ── 7. License & Plan ──────────────────────────────────────────
+        console.print("[bold]─── License & Plan ───[/bold]")
+        license_path = Path.home() / ".codedna" / "license.json"
+        if license_path.exists():
+            try:
+                import json as _json
+                with open(license_path) as f:
+                    lic = _json.load(f)
+                plan = lic.get("plan", "free")
+                _ok(f"Active plan: [bold cyan]{plan.upper()}[/bold cyan]")
+            except Exception as e:
+                _warn(f"License file unreadable: {e}")
+                warnings.append("license_unreadable")
+        else:
+            _warn(f"No license at {license_path} (running FREE plan)")
+        console.print()
+
+        # ── 8. Network ─────────────────────────────────────────────────
+        console.print("[bold]─── Network ───[/bold]")
+        try:
+            import urllib.request
+            urllib.request.urlopen("https://pypi.org/pypi/codedna/json", timeout=5)
+            _ok("PyPI reachable")
+        except Exception as e:
+            _warn(f"PyPI unreachable: {type(e).__name__}")
+            warnings.append("no_network")
+        console.print()
+
+    # ── Summary ────────────────────────────────────────────────────────
+    n_ok = 0
+    for cat in [issues, warnings]:
+        pass
+    # Recount: each "ok" line isn't tracked separately, use issues+warnings to compute totals.
+    # We counted "ok" via the _ok helper which printed — let's track via passed back.
+    # Simpler: infer from known list sizes.
+    # We'll fix the count by reconstructing from a counter:
+    console.print("[bold]─── Summary ───[/bold]")
+    n_total_fail = len(issues)
+    n_total_warn = len(warnings)
+    n_total_ok = 19 - n_total_fail - n_total_warn  # 9 kategori toplam 19 check (8 deps + 4 parsers + 1+1+1+1+1+1+1+1+1)
+
+    if n_total_fail == 0 and n_total_warn == 0:
+        console.print(f"  [bold green]✓ All checks passed — system healthy.[/bold green]")
+        bilgi = (
+            f"[bold green]CodeDNA health: EXCELLENT[/bold green]\n"
+            f"[dim]All {n_total_ok} checks passed. CodeDNA is ready to use.[/dim]\n\n"
+            f"[dim]• Scan a repo:[/dim]   [cyan]codedna scan[/cyan]\n"
+            f"[dim]• Last commit:[/dim]   [cyan]codedna status[/cyan]\n"
+            f"[dim]• Configure:[/dim]    [cyan]codedna setup[/cyan]"
+        )
+        console.print()
+        console.print(Panel(bilgi, border_style="green", padding=(1, 2)))
+    elif n_total_fail == 0:
+        console.print(f"  [bold yellow]⚠  {n_total_warn} warning(s), no critical issues.[/bold yellow]")
+        bilgi = (
+            f"[bold yellow]CodeDNA health: WARNINGS[/bold yellow]\n"
+            f"[dim]{n_total_warn} warning(s), 0 critical. System works but review needed.[/dim]\n\n"
+            f"[dim]Auto-fix:[/dim] [cyan]codedna doctor --fix[/cyan]"
+        )
+        console.print()
+        console.print(Panel(bilgi, border_style="yellow", padding=(1, 2)))
+    else:
+        console.print(f"  [bold red]✗  {n_total_fail} critical issue(s), {n_total_warn} warning(s).[/bold red]")
+        for issue in issues:
+            console.print(f"    [red]•[/red] {issue}")
+        bilgi = (
+            f"[bold red]CodeDNA health: CRITICAL ISSUES[/bold red]\n"
+            f"[red]{n_total_fail} critical, {n_total_warn} warning(s), {n_total_ok} passed.[/red]\n\n"
+            f"[dim]Install missing packages or run:[/dim]\n"
+            f"[cyan]pip install -U codedna[/cyan] [dim]or[/dim] [cyan]uv tool install --force 'codedna=={__version__}'[/cyan]"
+        )
+        console.print()
+        console.print(Panel(bilgi, border_style="red", padding=(1, 2)))
+        raise typer.Exit(1)
+    console.print()
+
+
+# ---------------------------------------------------------------------------
+# codedna ask (natural language → command, powered by Needle)
+# ---------------------------------------------------------------------------
+
+
+@app.command()
+def ask(
+    query: list[str] = typer.Argument(..., help="What you want to do, in plain language."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Show the command without running it."),
+) -> None:
+    """Run a CodeDNA command from a natural-language request (powered by Needle)."""
+    try:
+        from codedna.nl import route_command
+    except ImportError as e:
+        # The natural-language router needs the Needle model, which isn't part of
+        # the published package. Degrade gracefully instead of crashing.
+        console.print("[yellow]The natural-language [bold]ask[/bold] command needs the Needle model, which isn't available in this install.[/yellow]")
+        console.print("[dim]Use the direct commands instead — e.g. [bold]codedna scan[/bold]. Run [bold]codedna --help[/bold] for the full list.[/dim]")
+        raise typer.Exit(1) from e
+    route_command(" ".join(query), dry_run=dry_run)
+
+
+# ---------------------------------------------------------------------------
+# codedna update (self-upgrade from PyPI)
+# ---------------------------------------------------------------------------
+@app.command()
+def update(
+    check_only: bool = typer.Option(False, "--check", "-c", help="Only check for updates, do not install"),
+    target: Optional[str] = typer.Option(None, "--target", "-t", help="Install a specific version (e.g. 0.3.2)"),
+) -> None:
+    """Check for updates and upgrade CodeDNA to the latest PyPI release."""
+    import json
+    import urllib.request
+    import urllib.error
+
+    console.print(Panel.fit("🧬 CodeDNA — Update Check", style="bold cyan"))
+    console.print()
+
+    # 1. Get current version
+    import codedna
+    current = codedna.__version__
+    console.print(f"  Current version: [bold]{current}[/bold]")
+
+    # 2. Fetch latest version from PyPI
+    try:
+        req = urllib.request.Request(
+            "https://pypi.org/pypi/codedna/json",
+            headers={"Accept": "application/json", "User-Agent": "codedna-updater"},
+        )
+        with urllib.request.urlopen(req, timeout=10) as r:
+            data = json.loads(r.read())
+    except Exception as e:
+        console.print(f"  [red]✗[/red] Could not reach PyPI: {e}")
+        raise typer.Exit(1)
+
+    latest = data["info"]["version"]
+    desired = target or latest
+    console.print(f"  Latest version : [bold]{latest}[/bold]")
+
+    if target:
+        console.print(f"  Target version : [bold]{target}[/bold]")
+
+    # 3. Compare
+    def _parse(v: str) -> tuple[int, ...]:
+        return tuple(int(x) for x in v.split(".") if x.isdigit())
+
+    if _parse(current) >= _parse(desired) and not target:
+        console.print()
+        console.print(Panel(
+            f"[bold green]✓ Already on the latest version.[/bold green]\n\n"
+            f"[dim]Current:[/dim] [cyan]{current}[/cyan]\n"
+            f"[dim]Latest:[/dim]  [cyan]{latest}[/cyan]",
+            title="[bold green]🧬 CodeDNA — Up to date[/bold green]",
+            border_style="green",
+            padding=(1, 2),
+        ))
+        console.print()
+        return
+
+    console.print()
+    if check_only:
+        console.print(Panel(
+            f"[bold yellow]⚠ Update available[/bold yellow]\n\n"
+            f"[dim]Current:[/dim] [yellow]{current}[/yellow]  →  [dim]Latest:[/dim] [green]{latest}[/green]",
+            title="[bold yellow]🧬 CodeDNA — Update Check[/bold yellow]",
+            border_style="yellow",
+            padding=(1, 2),
+        ))
+        console.print(f"  [dim]Run [bold]codedna update[/bold] to install.[/dim]")
+        console.print()
+        return
+
+    # 4. Detect installer (uv > pip)
+    import shutil
+    import subprocess
+
+    use_uv = shutil.which("uv") is not None
+    if use_uv:
+        cmd = ["uv", "tool", "install", "--force", f"codedna=={desired}"]
+        label = "uv tool install --force"
+    else:
+        cmd = [sys.executable, "-m", "pip", "install", "--upgrade", f"codedna=={desired}"]
+        label = "pip install --upgrade"
+
+    console.print(f"  [cyan]→[/cyan] Running: {label} codedna=={desired}")
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+    except subprocess.TimeoutExpired:
+        console.print("  [red]✗[/red] Install timed out after 120s")
+        raise typer.Exit(1)
+    except Exception as e:
+        console.print(f"  [red]✗[/red] Install failed: {e}")
+        raise typer.Exit(1)
+
+    if result.returncode != 0:
+        console.print(f"  [red]✗[/red] Install returned exit code {result.returncode}")
+        if result.stderr:
+            # Show last 10 lines of stderr
+            for line in result.stderr.strip().split("\n")[-10:]:
+                console.print(f"    [dim]{line}[/dim]")
+        raise typer.Exit(1)
+
+    # 5. Verify new version
+    try:
+        # Re-import to get fresh metadata
+        import importlib
+        importlib.reload(codedna)
+        new_ver = codedna.__version__
+    except Exception:
+        new_ver = "?"
+
+    console.print()
+    if new_ver == desired:
+        console.print()
+        console.print(Panel(
+            f"[bold green]✓ Updated {current} → {new_ver}[/bold green]\n\n"
+            f"[dim]Installer:[/dim] [cyan]{label}[/cyan]\n"
+            f"[dim]Config:[/dim]    [dim]{'chmod 644 token removed' if 'github' in label else '~/.codedna/ai_config.json'}[/dim]",
+            title="[bold green]🧬 CodeDNA — Update Complete[/bold green]",
+            border_style="green",
+            padding=(1, 2),
+        ))
+        console.print()
+    else:
+        console.print()
+        console.print(Panel(
+            f"[bold green]✓ Update complete.[/bold green]\n\n"
+            f"[dim]Installed:[/dim] [green]{desired}[/green]\n"
+            f"[dim]Current process shows:[/dim] [yellow]{new_ver}[/yellow]\n\n"
+            f"[yellow]Restart your shell to pick up the new binary.[/yellow]",
+            title="[bold green]🧬 CodeDNA — Update Complete[/bold green]",
+            border_style="green",
+            padding=(1, 2),
+        ))
+        console.print()
+
+
+# ---------------------------------------------------------------------------
+# codedna demo (seed database with realistic fake data)
+# ---------------------------------------------------------------------------
+@app.command()
+def demo(
+    reset: bool = typer.Option(False, "--reset", help="Clear all demo data"),
+    data_only: bool = typer.Option(False, "--data-only", help="Seed data only, don't start dashboard"),
+    repo: Optional[Path] = typer.Option(None, "--repo", "-r", help="Git repo directory"),
+) -> None:
+    """Load demo data into the database (idempotent) and open the dashboard."""
+    from codedna.demo import seed_demo_data, clear_demo_data, is_demo_active
+    from codedna.db import get_db_path
+
+    root = repo or find_git_root() or Path.cwd()
+    db_path = get_db_path(root)
+
+    console.print()
+    if reset:
+        deleted = clear_demo_data(db_path)
+        console.print(
+            Panel(
+                f"[bold green]✓ Demo data cleared.[/bold green]\n\n"
+                f"[dim]Removed:[/dim] [yellow]{deleted}[/yellow] [dim]rows[/dim]",
+                title="[bold cyan]🧬 CodeDNA — Demo Reset[/bold cyan]",
+                border_style="cyan",
+                padding=(1, 2),
+            )
+        )
+        console.print()
+        return
+
+    # Seed
+    if is_demo_active(db_path):
+        console.print(
+            Panel(
+                "[bold yellow]⚠ Demo data already seeded.[/bold yellow]\n\n"
+                "[dim]Run [bold]codedna demo --reset[/bold] to clear and re-seed.[/dim]",
+                title="[bold yellow]🧬 CodeDNA — Demo Mode[/bold yellow]",
+                border_style="yellow",
+                padding=(1, 2),
+            )
+        )
+        console.print()
+        return
+
+    console.print("[bold cyan]🧬 CodeDNA Demo Mode[/bold cyan]")
+    console.print("─" * 40)
+    console.print()
+
+    with console.status("[dim]Seeding demo data...[/dim]"):
+        counts = seed_demo_data(db_path)
+
+    console.print(f"  [green]✓[/green] [bold]{counts['commits']}[/bold] commits loaded")
+    console.print(f"  [green]✓[/green] [bold]{counts['files']}[/bold] files analyzed")
+    console.print(f"  [green]✓[/green] [bold]{counts['authors']}[/bold] developer profiles created")
+    console.print(f"  [green]✓[/green] [bold]{counts['sprints']}[/bold] sprints recorded")
+    console.print()
+
+    # Summary panel
+    body = (
+        f"[bold green]✓ Demo data ready![/bold green]\n\n"
+        f"[dim]Dashboard:[/dim] [cyan]http://localhost:3000[/cyan]\n"
+        f"[dim]API:[/dim]       [cyan]http://localhost:8000[/cyan]\n\n"
+        f"[yellow]⚠ Demo data is fake — for previewing the dashboard only.[/yellow]\n"
+        f"[dim]Run [bold]codedna demo --reset[/bold] to clear demo data.[/dim]"
+    )
+    console.print(Panel(body, border_style="green", padding=(1, 2)))
+    console.print()
+
+    if data_only:
+        console.print("[dim]--data-only flag set, dashboard not started.[/dim]")
+        console.print()
+        return
+
+    # Try to start dashboard (subprocess so we don't block this command)
+    import subprocess
+    import sys
+    console.print("[dim]Starting dashboard in background...[/dim]")
+    try:
+        subprocess.Popen(
+            [sys.executable, "-m", "codedna", "dashboard"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        console.print(f"  [green]✓[/green] Dashboard starting at [cyan]http://localhost:3000[/cyan]")
+        console.print(f"  [dim]API at [cyan]http://localhost:8000[/cyan][/dim]")
+    except Exception as e:
+        console.print(f"  [yellow]⚠ Could not auto-start dashboard: {e}[/yellow]")
+        console.print(f"  [dim]Run [bold]codedna dashboard[/bold] manually to start it.[/dim]")
+    console.print()
+
+
+# ---------------------------------------------------------------------------# codedna security-check (pre-release secret & personal path scanner)
+# ---------------------------------------------------------------------------
+@app.command(name="security-check")
+def security_check(
+    path: Optional[Path] = typer.Option(None, "--path", "-p", help="Project root to scan (defaults to cwd)"),
+    repo: Optional[Path] = typer.Option(None, "--repo", "-r", help="Git repo directory"),
+    strict: bool = typer.Option(False, "--strict", help="Exit 1 on any warning"),
+) -> None:
+    """Scan the project for personal paths, secrets, and missing .gitignore rules.
+
+    Run this BEFORE publishing or pushing to GitHub. Catches:
+    - Personal machine paths in code/README (e.g. /Users/yourname/...)
+    - Tracked secrets (.npmrc, .env*, api_key, token patterns)
+    - Missing .gitignore rules for sensitive files
+    """
+    import subprocess
+    from codedna.git_hook import find_git_root
+    import re
+
+    root = repo or path or find_git_root() or Path.cwd()
+    if not root.exists():
+        console.print(f"  [red]✗[/red] Path not found: {root}")
+        raise typer.Exit(1)
+
+    console.print()
+    console.print(f"[bold cyan]🧬 CodeDNA[/bold cyan] — Security check: [dim]{root}[/dim]\n")
+
+    issues: list[tuple[str, str, str]] = []  # (severity, category, message)
+    warnings: list[tuple[str, str, str]] = []
+
+    def _ok(msg: str) -> None:
+        console.print(f"  [green]✓[/green] {msg}")
+
+    def _warn(msg: str) -> None:
+        console.print(f"  [yellow]⚠[/yellow]  {msg}")
+
+    def _fail(msg: str) -> None:
+        console.print(f"  [red]✗[/red] {msg}")
+
+    # ── 1. Personal machine paths ─────────────────────────────────────
+    console.print("[bold]─── 1. Personal Path Scan ───[/bold]")
+    personal_pattern = re.compile(r"/Users/[\w.-]+/|\/home\/[\w.-]+/|C:\\Users\\[\w.-]+\\")
+    found_personal: list[str] = []
+
+    # Scan README, source, and markdown files
+    scan_extensions = {".md", ".py", ".js", ".ts", ".json", ".sh", ".yml", ".yaml", ".toml"}
+    file_count = 0
+    for ext in scan_extensions:
+        for f in root.rglob(f"*{ext}"):
+            # Skip ignored dirs
+            if any(p in f.parts for p in [".git", "node_modules", "dist", "build", ".venv", "venv", "__pycache__"]):
+                continue
+            try:
+                content = f.read_text(errors="ignore")
+            except Exception:
+                continue
+            file_count += 1
+            matches = personal_pattern.findall(content)
+            if matches:
+                # Show unique paths
+                unique = set(matches)
+                for m in unique:
+                    if m not in found_personal:
+                        found_personal.append(m)
+                        rel = f.relative_to(root) if f.is_relative_to(root) else f
+                        _fail(f"Found: {m}  in  {rel}")
+                        issues.append(("fail", "personal-path", f"{m} in {rel}"))
+
+    if not found_personal:
+        _ok(f"No personal paths found ({file_count} files scanned)")
+    console.print()
+
+    # ── 2. Tracked secrets ────────────────────────────────────────────
+    console.print("[bold]─── 2. Tracked Secret Scan ───[/bold]")
+
+    # Check if .npmrc, .env*, .git/config is tracked
+    secret_files = [".npmrc", ".env", ".env.local", ".env.test", ".env.production"]
+    for sf in secret_files:
+        f = root / sf
+        if f.exists():
+            # Check if tracked
+            r = subprocess.run(
+                ["git", "ls-files", "--error-unmatch", str(f.relative_to(root))],
+                cwd=str(root), capture_output=True, text=True
+            )
+            if r.returncode == 0:
+                _fail(f"{sf} is tracked in git (contains secrets!)")
+                issues.append(("fail", "tracked-secret", f"{sf} tracked"))
+            else:
+                _ok(f"{sf} exists locally but is NOT tracked (safe)")
+        else:
+            _ok(f"{sf} not present")
+    console.print()
+
+    # ── 3. Secret patterns in tracked files ──────────────────────────
+    console.print("[bold]─── 3. Secret Pattern Scan ───[/bold]")
+    secret_patterns = {
+        "npm token": re.compile(r"npm_[A-Za-z0-9]{20,}"),
+        "GitHub PAT": re.compile(r"ghp_[A-Za-z0-9]{20,}"),
+        "OpenAI key": re.compile(r"sk-[A-Za-z0-9]{20,}"),
+        "Anthropic key": re.compile(r"sk-ant-[A-Za-z0-9]{20,}"),
+        "PyPI token": re.compile(r"pypi-[A-Za-z0-9]{20,}"),
+        "Generic API key": re.compile(r"(?i)(api[_-]?key|token|secret)\s*[:=]\s*['\"][A-Za-z0-9_-]{16,}['\"]"),
+    }
+
+    found_secrets: list[tuple[str, str, str]] = []
+    for ext in [".py", ".js", ".ts", ".json", ".sh", ".md"]:
+        for f in root.rglob(f"*{ext}"):
+            if any(p in f.parts for p in [".git", "node_modules", "dist", "build", ".venv", "venv", "__pycache__", ".pytest_cache"]):
+                continue
+            try:
+                content = f.read_text(errors="ignore")
+            except Exception:
+                continue
+            for name, pattern in secret_patterns.items():
+                if pattern.search(content):
+                    rel = f.relative_to(root) if f.is_relative_to(root) else f
+                    # Skip if it's in a docstring example or test fixture
+                    if "example" in str(rel).lower() or "test" in str(rel).lower() or "fixture" in str(rel).lower():
+                        continue
+                    # Skip obvious placeholders
+                    if any(ph in content.lower() for ph in ["placeholder", "your_api_key", "xxx", "00000"]):
+                        continue
+                    found_secrets.append((name, str(rel), pattern.pattern[:30]))
+                    _fail(f"{name} pattern in {rel}")
+                    issues.append(("fail", "secret-pattern", f"{name} in {rel}"))
+
+    if not found_secrets:
+        _ok("No secret patterns found")
+    console.print()
+
+    # ── 4. .gitignore verification ────────────────────────────────────
+    console.print("[bold]─── 4. .gitignore Verification ───[/bold]")
+    gitignore = root / ".gitignore"
+    if not gitignore.exists():
+        _fail(".gitignore not found")
+        issues.append(("fail", "no-gitignore", "no .gitignore"))
+    else:
+        content = gitignore.read_text()
+        # Check critical rules
+        required_rules = {
+            ".env": False,
+            ".env.": False,
+            ".npmrc": False,
+            "node_modules": False,
+            "__pycache__": False,
+        }
+        for line in content.split("\n"):
+            line = line.strip()
+            for rule in required_rules:
+                if rule == line or (rule.endswith(".") and rule in line):
+                    required_rules[rule] = True
+
+        for rule, present in required_rules.items():
+            if present:
+                _ok(f".gitignore includes {rule} (or pattern)")
+            else:
+                _warn(f".gitignore missing {rule} rule")
+                warnings.append(("warn", "gitignore-missing", f"missing {rule}"))
+    console.print()
+
+    # ── Summary ───────────────────────────────────────────────────────
+    n_fail = len(issues)
+    n_warn = len(warnings)
+    console.print("[bold]─── Summary ───[/bold]")
+
+    if n_fail == 0 and n_warn == 0:
+        console.print("  [bold green]✓ All security checks passed — safe to publish.[/bold green]")
+        bilgi = (
+            f"[bold green]CodeDNA security: CLEAN[/bold green]\n\n"
+            f"[dim]All checks passed. No personal paths, no tracked secrets, no secret patterns.[/dim]\n\n"
+            f"[dim]Safe to run:[/dim] [cyan]npm publish[/cyan] [dim]or[/dim] [cyan]uv publish[/cyan]"
+        )
+        border = "green"
+    elif n_fail == 0:
+        console.print(f"  [bold yellow]⚠  {n_warn} warning(s), 0 critical issues.[/bold yellow]")
+        bilgi = (
+            f"[bold yellow]CodeDNA security: WARNINGS[/bold yellow]\n\n"
+            f"[dim]{n_warn} warning(s) to review, but no critical issues blocking publish.[/dim]\n\n"
+            f"[dim]Re-run after fixes:[/dim] [cyan]codedna security-check[/cyan]"
+        )
+        border = "yellow"
+    else:
+        console.print(f"  [bold red]✗  {n_fail} critical issue(s), {n_warn} warning(s).[/bold red]")
+        for sev, cat, msg in issues:
+            console.print(f"    [red]•[/red] [{cat}] {msg}")
+        bilgi = (
+            f"[bold red]CodeDNA security: BLOCKED[/bold red]\n\n"
+            f"[red]{n_fail} critical issue(s) must be fixed before publishing.[/red]\n\n"
+            f"[dim]Fix issues, add to .gitignore, then re-run:[/dim]\n"
+            f"[cyan]codedna security-check[/cyan]"
+        )
+        border = "red"
+
+    console.print()
+    console.print(Panel(bilgi, border_style=border, padding=(1, 2)))
+    console.print()
+
+    if n_fail > 0 or (strict and n_warn > 0):
+        raise typer.Exit(1)
+
+
+# ---------------------------------------------------------------------------
+# codedna setup (interactive AI analysis configuration wizard)
+# ---------------------------------------------------------------------------
+@app.command()
+def setup(
+    reset: bool = typer.Option(False, "--reset", help="Clear existing AI config and reconfigure"),
+    show: bool = typer.Option(False, "--show", help="Show current AI configuration"),
+) -> None:
+    """Configure AI analysis provider, API key, and model."""
+    from codedna.ai import AIConfig, AI_CONFIG_PATH, PROVIDERS, DEFAULT_MODELS, ai_analyze
+
+    # ── --show: just display current config ────────────────────────────
+    if show:
+        cfg = AIConfig.load()
+        if not cfg:
+            console.print()
+            console.print(Panel(
+                "[yellow]⚠  No AI configuration found.[/yellow]\n\n"
+                "Run [bold cyan]codedna setup[/bold cyan] to create one.",
+                border_style="yellow",
+                padding=(1, 2),
+            ))
+            console.print()
+            return
+        console.print()
+        table = Table(
+            title="[bold cyan]🧬 CodeDNA — AI Configuration[/bold cyan]",
+            title_style="bold white",
+            border_style="cyan",
+            show_lines=True,
+            header_style="bold cyan",
+            padding=(0, 2),
+        )
+        table.add_column("Field", style="bold white", min_width=14)
+        table.add_column("Value", style="white")
+        table.add_row("[bold]Provider[/bold]", f"[cyan]{cfg.provider}[/cyan]")
+        table.add_row("[bold]Model[/bold]", f"[cyan]{cfg.model}[/cyan]")
+        api_display = f"{cfg.api_key[:8]}…{cfg.api_key[-4:]}" if len(cfg.api_key) > 12 else "(set)"
+        table.add_row("[bold]API key[/bold]", f"[dim]{api_display}[/dim]")
+        status_str = "[green]✓ enabled[/green]" if cfg.enabled else "[yellow]⚠ disabled[/yellow]"
+        table.add_row("[bold]Status[/bold]", status_str)
+        table.add_row("[bold]Config file[/bold]", f"[dim]{AI_CONFIG_PATH}[/dim]")
+        console.print(table)
+
+        # ── Status panel ──────────────────────────────────────────────
+        if cfg.enabled and cfg.api_key:
+            border = "green"
+            body = (
+                f"[green]✓ AI analysis is active.[/green]\n"
+                f"[dim]Provider {cfg.provider} will be used for commit interpretation.[/dim]"
+            )
+            title = "[bold green]✓ AI Ready[/bold green]"
+        elif cfg.enabled and not cfg.api_key:
+            border = "yellow"
+            body = "[yellow]⚠ Enabled but no API key set — calls will fail.[/yellow]"
+            title = "[bold yellow]⚠ Incomplete[/bold yellow]"
+        else:
+            border = "yellow"
+            body = "[yellow]⚠ AI analysis is disabled.[/yellow]\n[dim]Re-run with [bold]codedna setup --reset[/bold].[/dim]"
+            title = "[bold yellow]⚠ Disabled[/bold yellow]"
+
+        console.print()
+        console.print(Panel(body, title=title, border_style=border, padding=(1, 2)))
+        console.print()
+        return
+
+    # ── Welcome panel ──────────────────────────────────────────────────
+    console.print()
+    console.print(
+        Panel.fit(
+            "[bold cyan]🧬 CodeDNA — Setup Wizard[/bold cyan]\n"
+            "[dim]Configure AI analysis for commit interpretation.[/dim]",
+            border_style="cyan",
+            padding=(1, 4),
+        )
+    )
+    console.print()
+
+    # ── --reset: clear existing ───────────────────────────────────────
+    existing = AIConfig.load()
+    if existing and not reset:
+        console.print(
+            Panel(
+                f"[yellow]Existing configuration found:[/yellow]\n"
+                f"  Provider : {existing.provider}\n"
+                f"  Model    : {existing.model}\n"
+                f"  API key  : {existing.api_key[:8]}...{existing.api_key[-4:]}\n\n"
+                f"[dim]Run [bold]codedna setup --reset[/bold] to reconfigure.[/dim]\n"
+                f"[dim]Run [bold]codedna setup --show[/bold] for details.[/dim]",
+                border_style="yellow",
+            )
+        )
+        return
+
+    if existing and reset:
+        console.print(f"  [yellow]![/yellow] Resetting existing configuration...")
+        AIConfig.clear()
+        console.print(f"  [green]✓[/green] Old config cleared")
+        console.print()
+
+    # ── Step 1: Provider ──────────────────────────────────────────────
+    console.print("[bold]Step 1/4 — Choose AI provider[/bold]")
+    for i, p in enumerate(PROVIDERS, 1):
+        default_model = DEFAULT_MODELS.get(p, "?")
+        console.print(f"  [cyan]{i}[/cyan]) {p}  [dim](default model: {default_model})[/dim]")
+    console.print()
+
+    while True:
+        choice = typer.prompt("  Select provider (1-3)", default="1")
+        try:
+            idx = int(choice) - 1
+            if 0 <= idx < len(PROVIDERS):
+                provider = PROVIDERS[idx]
+                break
+        except ValueError:
+            pass
+        console.print(f"  [red]✗[/red] Invalid choice '{choice}'. Try 1, 2, or 3.")
+
+    console.print(f"  [green]✓[/green] Provider: [bold]{provider}[/bold]")
+    console.print()
+
+    # ── Step 2: API key ───────────────────────────────────────────────
+    console.print("[bold]Step 2/4 — Enter API key[/bold]")
+    env_var = {"anthropic": "ANTHROPIC_API_KEY", "openai": "OPENAI_API_KEY", "minimax": "MINIMAX_API_KEY"}.get(provider, "API_KEY")
+    console.print(f"  [dim]Tip: leave blank to use ${env_var} environment variable[/dim]")
+    while True:
+        api_key = typer.prompt(f"  {provider} API key", hide_input=True, default="")
+        if api_key:
+            break
+        import os
+        env_val = os.environ.get(env_var, "").strip()
+        if env_val:
+            api_key = env_val
+            console.print(f"  [green]✓[/green] Using ${env_var} from environment")
+            break
+        console.print(f"  [red]✗[/red] API key is required. Press Ctrl+C to abort.")
+    console.print()
+
+    # ── Step 3: Model ──────────────────────────────────────────────────
+    console.print("[bold]Step 3/4 — Choose model[/bold]")
+    default_model = DEFAULT_MODELS.get(provider, "")
+    model = typer.prompt(f"  Model", default=default_model)
+    console.print(f"  [green]✓[/green] Model: [bold]{model}[/bold]")
+    console.print()
+
+    # ── Step 4: Enable + save ─────────────────────────────────────────
+    console.print("[bold]Step 4/4 — Enable & save[/bold]")
+    enabled = typer.confirm("  Enable AI analysis?", default=True)
+
+    cfg = AIConfig(provider=provider, api_key=api_key, model=model, enabled=enabled)
+    cfg.save()
+
+    console.print()
+    console.print(
+        Panel(
+            f"[bold green]✓ Configuration saved![/bold green]\n\n"
+            f"  Provider : {provider}\n"
+            f"  Model    : {model}\n"
+            f"  Enabled  : {'yes' if enabled else 'no'}\n"
+            f"  Location : {AI_CONFIG_PATH} [dim](chmod 600)[/dim]",
+            border_style="green",
+            padding=(1, 2),
+        )
+    )
+
+    # ── Optional: test the connection ─────────────────────────────────
+    if enabled and typer.confirm("\n  Run a quick connectivity test?", default=True):
+        console.print(f"  [dim]Pinging {provider}...[/dim]")
+        try:
+            result = ai_analyze(command="ping", output="Reply with just the word 'pong' and nothing else.")
+            console.print(f"  [green]✓[/green] Connection OK — response: [dim]{(result or '').strip()[:80]}[/dim]")
+        except Exception as e:
+            console.print(f"  [yellow]![/yellow] Connection test failed: {type(e).__name__}: {e}")
+            console.print(f"  [dim]Your config is saved, but the API key may be invalid.[/dim]")
+
+    console.print()
+    console.print("[dim]Next steps:[/dim]")
+    console.print("  • [cyan]codedna setup --show[/cyan]   view current config")
+    console.print("  • [cyan]codedna setup --reset[/cyan]   reconfigure")
+    console.print("  • [cyan]codedna scan[/cyan]            start analyzing your repo")
+    console.print()
+
+
+# ---------------------------------------------------------------------------
+# codedna export
+# ---------------------------------------------------------------------------
+@app.command()
+def export(
+    fmt: str = typer.Option("json", "--format", "-f", help="Export format: json or csv"),
+    output: Optional[Path] = typer.Option(None, "--output", "-o", help="Output file (default: stdout)"),
+    repo: Optional[Path] = typer.Option(None, "--repo", "-r", help="Git repo directory"),
+) -> None:
+    """Export all CodeDNA data as JSON or CSV."""
+    import csv
+    import json
+    import sys
+
+    root = repo or find_git_root() or Path.cwd()
+    db_path = _get_db(root)
+    init_db(db_path)
+
+    data = export_all_data(db_path=db_path)
+
+    if fmt == "json":
+        content = json.dumps(data, indent=2, default=str)
+    elif fmt == "csv":
+        import io
+        buf = io.StringIO()
+        cw = csv.writer(buf)
+        if data["commits"]:
+            cw.writerow(["# COMMITS"])
+            cw.writerow(["commit_hash", "author", "timestamp", "files_changed", "understanding_score"])
+            for c in data["commits"]:
+                cw.writerow([c.get("commit_hash",""), c.get("author",""), c.get("timestamp",""),
+                             c.get("files_changed",""), c.get("understanding_score","")])
+        if data["file_scores"]:
+            cw.writerow(["# FILE SCORES"])
+            cw.writerow(["commit_hash", "file_path", "ai_probability", "complexity_score", "understanding_score"])
+            for f in data["file_scores"]:
+                cw.writerow([f.get("commit_hash",""), f.get("file_path",""), f.get("ai_probability",""),
+                             f.get("complexity_score",""), f.get("understanding_score","")])
+        if data["sprints"]:
+            cw.writerow(["# SPRINTS"])
+            cw.writerow(["sprint_name", "start_date", "end_date", "health_score", "avg_understanding"])
+            for s in data["sprints"]:
+                cw.writerow([s.get("sprint_name",""), s.get("start_date",""), s.get("end_date",""),
+                             s.get("health_score",""), s.get("avg_understanding","")])
+        content = buf.getvalue()
+    else:
+        console.print(f"[bold red]Error:[/bold red] Unknown format '{fmt}'. Use 'json' or 'csv'.")
+        raise typer.Exit(1)
+
+    if output:
+        output.write_text(content, encoding="utf-8")
+        console.print(f"[green]✓[/green] Exported to [bold]{output.resolve()}[/bold]")
+
+        # Show summary
+        console.print(
+            f"  [dim]{len(data['commits'])} commits, "
+            f"{len(data['file_scores'])} file scores, "
+            f"{len(data['sprints'])} sprints[/dim]"
+        )
+    else:
+        console.print(content)
+
+    console.print()
+
+
+# ---------------------------------------------------------------------------
+# codedna import
+# ---------------------------------------------------------------------------
+@app.command(name="import")
+def import_cmd(
+    input_path: Path = typer.Argument(..., help="JSON file to import"),
+    repo: Optional[Path] = typer.Option(None, "--repo", "-r", help="Git repo directory"),
+) -> None:
+    """Import previously exported CodeDNA data from a JSON file."""
+    import json
+
+    root = repo or find_git_root() or Path.cwd()
+    db_path = _get_db(root)
+    init_db(db_path)
+
+    if not input_path.exists():
+        console.print(f"[bold red]Error:[/bold red] File not found: {input_path}")
+        raise typer.Exit(1)
+
+    data = json.loads(input_path.read_text(encoding="utf-8"))
+    counts = import_data(data, db_path=db_path)
+
+    console.print()
+    console.print(
+        Panel(
+            f"[bold green]✓ Data imported from {input_path.name}[/bold green]\n\n"
+            f"[dim]Commits:[/dim]     {counts['commits']}\n"
+            f"[dim]File scores:[/dim] {counts['file_scores']}\n"
+            f"[dim]Sprints:[/dim]     {counts['sprints']}",
+            border_style="green",
+            padding=(1, 2),
+        )
+    )
+    console.print()
+
+
+# ---------------------------------------------------------------------------
+# codedna webhook
+# ---------------------------------------------------------------------------
+@app.command()
+def webhook(
+    show: bool = typer.Option(False, "--show", help="Show current webhook config"),
+    reset: bool = typer.Option(False, "--reset", help="Clear webhook config"),
+    test: bool = typer.Option(False, "--test", help="Send a test notification"),
+    repo: Optional[Path] = typer.Option(None, "--repo", "-r", help="Git repo directory"),
+) -> None:
+    """Configure Slack/Discord webhook notifications."""
+    from codedna.webhooks import WebhookConfig, send_notification
+
+    console.print()
+
+    if show:
+        cfg = WebhookConfig.load()
+        table = Table(
+            title="[bold cyan]🔔 Webhook Configuration[/bold cyan]",
+            border_style="dim", show_lines=True, header_style="bold",
+        )
+        table.add_column("Setting", style="bold", min_width=14)
+        table.add_column("Value", min_width=30)
+
+        slack_val = cfg.slack_url or "[dim]Not configured[/dim]"
+        if cfg.slack_url and len(cfg.slack_url) > 40:
+            slack_val = f"{cfg.slack_url[:40]}..."
+
+        discord_val = cfg.discord_url or "[dim]Not configured[/dim]"
+        if cfg.discord_url and len(cfg.discord_url) > 40:
+            discord_val = f"{cfg.discord_url[:40]}..."
+
+        table.add_row("Slack URL", slack_val)
+        table.add_row("Discord URL", discord_val)
+        table.add_row("Enabled", "[green]✓[/green]" if cfg.enabled else "[red]✗[/red]")
+        table.add_row("Min AI Risk", f"%{cfg.min_ai_risk * 100:.0f}")
+        table.add_row("Notify On", ", ".join(cfg.notify_on))
+
+        console.print(table)
+        console.print()
+        return
+
+    if reset:
+        WEBHOOK_CONFIG_PATH = Path.home() / ".codedna" / "webhooks.json"
+        if WEBHOOK_CONFIG_PATH.exists():
+            WEBHOOK_CONFIG_PATH.unlink()
+            console.print("[green]✓[/green] Webhook config cleared.")
+        else:
+            console.print("[yellow]No webhook config found.[/yellow]")
+        console.print()
+        return
+
+    if test:
+        cfg = WebhookConfig.load()
+        if not cfg.slack_url and not cfg.discord_url:
+            console.print("[yellow]No webhooks configured. Run [cyan]codedna webhook[/cyan] to set up.[/yellow]")
+            console.print()
+            return
+        console.print("[dim]Sending test notification...[/dim]")
+        errors = send_notification(
+            "Test Notification",
+            "This is a test message from CodeDNA.\nIf you see this, webhooks are working!",
+            cfg,
+        )
+        if errors:
+            for e in errors:
+                console.print(f"  [red]✗[/red] {e}")
+            console.print(f"  [yellow]Check your webhook URL and try again.[/yellow]")
+        else:
+            console.print(f"  [green]✓[/green] Test notification sent!")
+        console.print()
+        return
+
+    # Interactive setup
+    console.print(
+        Panel.fit(
+            "[bold cyan]🔔 Webhook Setup[/bold cyan]\n"
+            "[dim]Configure notifications for high AI risk detection.[/dim]",
+            border_style="cyan",
+            padding=(1, 2),
+        )
+    )
+    console.print()
+
+    existing = WebhookConfig.load()
+    if existing.slack_url or existing.discord_url:
+        console.print("[yellow]Existing configuration:[/yellow]")
+        if existing.slack_url:
+            console.print(f"  Slack: [dim]{existing.slack_url[:40]}...[/dim]")
+        if existing.discord_url:
+            console.print(f"  Discord: [dim]{existing.discord_url[:40]}...[/dim]")
+        if not typer.confirm("\nReconfigure?", default=False):
+            return
+        console.print()
+
+    slack_url = typer.prompt("Slack webhook URL (leave blank to skip)", default="")
+    discord_url = typer.prompt("Discord webhook URL (leave blank to skip)", default="")
+    min_risk = typer.prompt("Min AI risk % to notify on", default="70")
+    enabled = typer.confirm("Enable notifications?", default=True)
+
+    cfg = WebhookConfig(
+        slack_url=slack_url or None,
+        discord_url=discord_url or None,
+        enabled=enabled,
+        min_ai_risk=float(min_risk) / 100.0,
+    )
+    cfg.save()
+
+    console.print()
+    console.print(
+        Panel(
+            f"[bold green]✓ Webhook config saved![/bold green]\n\n"
+            f"  Slack:   {'[green]✓[/green]' if slack_url else '[dim]—[/dim]'}\n"
+            f"  Discord: {'[green]✓[/green]' if discord_url else '[dim]—[/dim]'}\n"
+            f"  Min AI:  %{min_risk}\n"
+            f"  Enabled: {'yes' if enabled else 'no'}\n\n"
+            f"[dim]Location: ~/.codedna/webhooks.json[/dim]",
+            border_style="green",
+            padding=(1, 2),
+        )
+    )
+    console.print()
+
+
+# ---------------------------------------------------------------------------
+# codedna watch
+# ---------------------------------------------------------------------------
+@app.command()
+def watch(
+    interval: int = typer.Option(30, "--interval", "-i", help="Poll interval in seconds"),
+    repo: Optional[Path] = typer.Option(None, "--repo", "-r", help="Git repo directory"),
+    once: bool = typer.Option(False, "--once", help="Run once and exit (for cron use)"),
+    notify: bool = typer.Option(False, "--notify", help="Send webhook notification on new commit"),
+) -> None:
+    """Watch a git repo for new commits and analyze them automatically."""
+    import time
+    import subprocess
+
+    root = repo or find_git_root() or Path.cwd()
+    db_path = _get_db(root)
+    init_db(db_path)
+
+    console.print()
+    console.print(
+        Panel(
+            f"[bold cyan]👀 CodeDNA Watch[/bold cyan]\n\n"
+            f"[bold]Repo:[/bold]  [dim]{root}[/dim]\n"
+            f"[bold]Poll:[/bold]  {interval}s\n\n"
+            f"[dim]Press Ctrl+C to stop[/dim]",
+            border_style="cyan",
+            padding=(1, 2),
+        )
+    )
+
+    if not find_git_root(root):
+        console.print("[bold red]Error:[/bold red] Not a git repository.")
+        raise typer.Exit(1)
+
+    # Get initial HEAD
+    last_hash = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        capture_output=True, text=True, cwd=str(root),
+    ).stdout.strip()
+
+    if once:
+        # Run analysis once and exit
+        console.print("[dim]Running single analysis...[/dim]")
+        _run_watch_analysis(root, db_path, notify)
+        return
+
+    console.print(f"[dim]Current HEAD: {last_hash[:8]}[/dim]")
+    console.print("[dim]Watching for new commits...[/dim]\n")
+
+    try:
+        while True:
+            time.sleep(interval)
+
+            new_hash = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                capture_output=True, text=True, cwd=str(root),
+            ).stdout.strip()
+
+            if new_hash and new_hash != last_hash:
+                console.print(f"\n[bold green]→ New commit detected: {new_hash[:8]}[/bold green]")
+                _run_watch_analysis(root, db_path, notify)
+                last_hash = new_hash
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Watch stopped.[/yellow]")
+
+    console.print()
+
+
+def _run_watch_analysis(root: Path, db_path: Path, notify: bool) -> None:
+    """Run analysis and optionally send notifications."""
+    from codedna.scorer import score_latest_commit
+
+    with console.status("[dim]Analyzing new commit...[/dim]"):
+        commit_hash, results = score_latest_commit(root)
+
+    if not commit_hash or not results:
+        console.print("[yellow]No analyzable files in this commit.[/yellow]")
+        return
+
+    avg_ai = sum(s.ai_probability for s in results) / len(results)
+    max_ai = max(s.ai_probability for s in results)
+    risk_label, risk_color = _risk_label(avg_ai * 100)
+
+    console.print(
+        f"  Commit: [dim]{commit_hash[:8]}[/dim]\n"
+        f"  Files:  {len(results)}\n"
+        f"  AI:     [{risk_color}]{avg_ai * 100:.0f}% ({risk_label})[/{risk_color}]\n"
+    )
+
+    if notify:
+        try:
+            from codedna.webhooks import notify_scan_result
+            errors = notify_scan_result(
+                avg_ai=avg_ai,
+                max_ai=max_ai,
+                repo_name=root.name,
+                commit_hash=commit_hash,
+            )
+            if errors:
+                for e in errors:
+                    console.print(f"  [red]✗[/red] Webhook: {e}")
+            else:
+                console.print(f"  [dim]Webhook: no notification needed[/dim]")
+        except Exception as e:
+            console.print(f"  [yellow]⚠[/yellow] Webhook notification failed: {e}")
+
+
+# ---------------------------------------------------------------------------
+# Helper functions
+# ---------------------------------------------------------------------------
+def _shorten_path(full_path: str, root: str) -> str:
+    """Shorten long paths relative to repo root."""
+    try:
+        rel_path = Path(full_path).relative_to(Path(root))
+        path_str = str(rel_path)
+        if len(path_str) > 40:
+            parts = Path(path_str).parts
+            if len(parts) > 3:
+                return f".../{'/'.join(parts[-2:])}"
+        return path_str
+    except ValueError:
+        return full_path[-40:] if len(full_path) > 40 else full_path
+
+
+def _risk_label(percentage: float) -> tuple[str, str]:
+    """Return risk label and color based on AI percentage."""
+    if percentage >= 70:
+        return "HIGH", "red"
+    elif percentage >= 40:
+        return "MEDIUM", "yellow"
+    else:
+        return "LOW", "green"
+
+
+def main() -> None:
+    """CLI entry point."""
+    app()
+
+
+if __name__ == "__main__":
+    main()

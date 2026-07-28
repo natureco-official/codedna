@@ -49,7 +49,7 @@ dependencies = [
 [project.optional-dependencies]
 nl = [
     "huggingface_hub",
-    "pyarrow>=14,<18",
+    "pyarrow>=14,<26",
 ]
 dev = [
     "pytest>=9.1.1",

@@ -509,5 +509,6 @@ MIT License - Copyright (c) 2026 NatureCo
 - [**NatureCo CLI**](https://github.com/natureco-official/natureco-cli) — A terminal-native AI assistant: chat, a coding agent, automation, and bots on Telegram, Discord and Slack
 - [**Urðr**](https://github.com/natureco-official/urdr) — Tree-structured memory for AI coding agents — plain Markdown you can `git diff`, no vector database
 - [**NatureCo SDK**](https://github.com/natureco-official/natureco-sdk) — JavaScript SDK for the NatureCo API — build AI chatbots and ship them anywhere
+- [**Verðandi**](https://github.com/natureco-official/verdandi) — Task-context compiler for AI coding agents — indexes with the TypeScript AST so the agent stops burning tokens hunting for the right file
 
 <sub>Part of the **NatureCo** ecosystem — [natureco.me](https://natureco.me) · NatureCo ekosisteminin parçası</sub>
